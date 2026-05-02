@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
-import { v4 as uuidv4 } from 'uuid'; // Generates unique session IDs
+import { v4 as uuidv4 } from 'uuid';
 import { Send, FileUp, Loader2, Bot, User, CheckCircle2 } from 'lucide-react';
 import DecisionCard from '../components/ui/DecisionCard';
 
-// We now accept currentSessionId and onSessionSelect from App/MainDashboard
-const AnalysisChat = ({ currentSessionId, onSessionSelect }) => {
+// Added onChatUpdated to trigger sidebar refreshes
+const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -26,22 +26,24 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect }) => {
       axios.get(`http://127.0.0.1:8001/chats/history/${currentSessionId}`)
         .then(res => {
           let restoredTender = null;
+          
           const loadedMessages = res.data.map(m => {
             try {
-              // Check if the message content is our JSON tender result
-              const parsed = JSON.parse(m.text);
+              // FIX: Use m.content and m.role to match FastAPI backend
+              const parsed = JSON.parse(m.content); 
               if (parsed && parsed.isTenderResult) {
                 restoredTender = parsed.data; // Restore context
-                return { type: m.type, result: parsed.data };
+                return { type: m.role, result: parsed.data };
               }
             } catch (e) {
               // If it's not JSON, it's a normal text message
             }
-            return { type: m.type, text: m.text };
+            // FIX: Map backend 'role' to 'type', and 'content' to 'text'
+            return { type: m.role, text: m.content };
           });
           
           setMessages(loadedMessages);
-          setActiveTender(restoredTender); // Allow user to keep chatting about this tender
+          setActiveTender(restoredTender); 
         })
         .catch(err => console.error("Error loading history:", err))
         .finally(() => setIsLoading(false));
@@ -55,7 +57,6 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect }) => {
   // 3. Helper to save messages to the database
   const persistMessage = async (sessionId, role, content, title = null) => {
     try {
-      // If content is an object (like the DecisionCard data), stringify it specially
       const contentStr = typeof content === 'object' 
         ? JSON.stringify({ isTenderResult: true, data: content }) 
         : content;
@@ -66,6 +67,10 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect }) => {
         content: contentStr,
         title: title
       });
+      
+      // FIX: Trigger the sidebar to refresh so new chats appear instantly
+      if (onChatUpdated) onChatUpdated(); 
+      
     } catch (e) {
       console.error("Failed to save message to DB", e);
     }
@@ -76,7 +81,6 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect }) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
 
-    // Session Management
     let sid = currentSessionId;
     let isNewSession = false;
     if (!sid) {
@@ -91,7 +95,6 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect }) => {
     setMessages(prev => [...prev, { type: 'user', text: userMsg }]);
     setIsLoading(true);
 
-    // AI Title Generation for new chats
     let chatTitle = "New Analysis";
     if (isNewSession) {
       try {
@@ -100,7 +103,6 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect }) => {
       } catch (e) {}
     }
 
-    // Save user upload message
     await persistMessage(sid, 'user', userMsg, isNewSession ? chatTitle : null);
 
     const formData = new FormData();
@@ -117,7 +119,7 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect }) => {
       if (tenderData) setActiveTender(tenderData);
       
       setMessages(prev => [...prev, { type: 'ai', result: tenderData }]);
-      await persistMessage(sid, 'ai', tenderData); // Save the analysis object
+      await persistMessage(sid, 'ai', tenderData); 
 
     } catch (e) {
       const errorMsg = e.response?.data?.detail || e.message; 

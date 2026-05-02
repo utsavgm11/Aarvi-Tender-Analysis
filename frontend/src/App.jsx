@@ -4,18 +4,19 @@ import Navbar from './components/layout/Navbar';
 import MainDashboard from './pages/MainDashboard';
 import AnalyticsDashboard from './pages/AnalyticsDashboard';
 import NotificationPage from './pages/NotificationPage';
+import SharedChat from './pages/SharedChat';
 
 // Helper component for conditional rendering
 const Layout = ({ children }) => {
   const location = useLocation();
   
-  // Only show Navbar if the path is NOT "/" 
-  // (Because "/" will have its own Sidebar now)
-  const showNavbar = location.pathname !== '/';
+  // HIDE Navbar on "/" (Dashboard with Sidebar) 
+  // and HIDE Navbar on "/share" (Standalone shared view)
+  const isSpecialPage = location.pathname === '/' || location.pathname.startsWith('/share/');
 
   return (
     <div className="h-screen flex flex-col bg-slate-50">
-      {showNavbar && <Navbar />}
+      {!isSpecialPage && <Navbar />}
       <div className="flex-1 overflow-hidden">
         {children}
       </div>
@@ -24,15 +25,14 @@ const Layout = ({ children }) => {
 };
 
 function App() {
-  // 1. Lift the session state up to the App level so it persists 
-  // even if the user navigates to /analytics and back
+  // Lift the session state up to the App level so it persists 
   const [currentSessionId, setCurrentSessionId] = useState(null);
 
   return (
     <Router>
       <Layout>
         <Routes>
-          {/* 2. Pass the session state into the MainDashboard */}
+          {/* Main App Dashboard */}
           <Route 
             path="/" 
             element={
@@ -42,8 +42,13 @@ function App() {
               />
             } 
           />
+          
+          {/* Internal Pages */}
           <Route path="/analytics" element={<AnalyticsDashboard />} />
           <Route path="/notifications" element={<NotificationPage />} />
+          
+          {/* NEW: Standalone Shared Chat View */}
+          <Route path="/share/:id" element={<SharedChat />} />
         </Routes>
       </Layout>
     </Router>

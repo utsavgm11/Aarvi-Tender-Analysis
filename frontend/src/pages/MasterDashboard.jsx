@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { 
   Target, Clock, CheckCircle, XCircle, FileText, 
-  Search, Plus, Edit3, X 
+  Search, Plus, Edit3, X, Trash2 // Added Trash2
 } from 'lucide-react';
 
 const MasterDashboard = () => {
@@ -36,7 +36,7 @@ const MasterDashboard = () => {
 
   const handleStatusChange = async (tender_no, newStatus) => {
     try {
-      await axios.patch(`${API_URL}/tenders/${encodeURIComponent(tender_no)}`, { tender_status: newStatus });
+      await axios.patch(`${API_URL}/tenders/${encodeURIComponent(tender_no)}/status`, { tender_status: newStatus });
       fetchTenders(); 
     } catch (err) { alert("Error Updating: " + (err.response?.data?.error || err.message)); }
   };
@@ -69,7 +69,6 @@ const MasterDashboard = () => {
   const handleSaveTender = async (e) => {
     e.preventDefault();
     
-    // DATA CLEANING: Convert empty strings to null for numbers to fix 422 errors
     const cleanedData = {
       ...formData,
       tender_open_price: formData.tender_open_price === '' ? null : parseFloat(formData.tender_open_price),
@@ -93,6 +92,22 @@ const MasterDashboard = () => {
     }
   };
 
+  // NEW: Delete Tender Function
+  const handleDeleteTender = async (tenderNo) => {
+    if (window.confirm(`Are you sure you want to permanently delete Tender: ${tenderNo}?`)) {
+      try {
+        setLoading(true);
+        await axios.delete(`${API_URL}/tenders/${encodeURIComponent(tenderNo)}`);
+        setIsModalOpen(false); 
+        await fetchTenders(); 
+      } catch (err) {
+        alert("Delete failed: " + err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
+
   const handleDownload = () => window.open(`${API_URL}/export-tenders`, '_blank');
 
   const today = useMemo(() => {
@@ -110,11 +125,18 @@ const MasterDashboard = () => {
     return ''; 
   };
 
+  // UPDATED: Sorting logic to keep Pending/New items visible
   const sortedTenders = useMemo(() => {
     return tenders.filter(t => 
       t.name_of_client?.toLowerCase().includes(searchTerm.toLowerCase()) || 
       t.tender_no?.toLowerCase().includes(searchTerm.toLowerCase())
-    ).sort((a, b) => new Date(a.due_date || '9999-12-31') - new Date(b.due_date || '9999-12-31'));
+    ).sort((a, b) => {
+      // Prioritize Pending/New items at the top
+      if (a.tender_status === 'Pending' && b.tender_status !== 'Pending') return -1;
+      if (a.tender_status !== 'Pending' && b.tender_status === 'Pending') return 1;
+      // Secondary sort by due date
+      return new Date(a.due_date || '9999-12-31') - new Date(b.due_date || '9999-12-31');
+    });
   }, [tenders, searchTerm]);
 
   const stats = useMemo(() => ({
@@ -221,9 +243,25 @@ const MasterDashboard = () => {
                 <div><label className="block text-[11px] uppercase font-bold text-slate-500 mb-2">Description</label><textarea name="description" value={formData.description} onChange={handleChange} rows="2" className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"></textarea></div>
                 <div><label className="block text-[11px] uppercase font-bold text-slate-500 mb-2">Comments</label><textarea name="comments" value={formData.comments} onChange={handleChange} rows="2" className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"></textarea></div>
               </div>
-              <div className="pt-4 flex justify-end gap-3 border-t">
-                <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-3 font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition-colors">Cancel</button>
-                <button type="submit" disabled={loading} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-colors flex items-center gap-2">{loading ? 'Saving...' : 'Save Tender Record'}</button>
+              
+              {/* UPDATED: Modal Footer with Delete button in Edit mode */}
+              <div className="pt-4 flex justify-between items-center border-t">
+                {modalMode === 'edit' ? (
+                  <button 
+                    type="button" 
+                    onClick={() => handleDeleteTender(formData.tender_no)}
+                    className="px-6 py-3 font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition-colors flex items-center gap-2"
+                  >
+                    <Trash2 size={18} /> Delete Tender
+                  </button>
+                ) : (
+                  <div></div>
+                )}
+
+                <div className="flex gap-3">
+                  <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-3 font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition-colors">Cancel</button>
+                  <button type="submit" disabled={loading} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-colors flex items-center gap-2">{loading ? 'Saving...' : 'Save Tender Record'}</button>
+                </div>
               </div>
             </form>
           </div>

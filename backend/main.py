@@ -5,9 +5,10 @@ import io
 from fastapi.responses import StreamingResponse
 import sqlite3
 import os
+import uuid
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import date # Added for date comparison
+from datetime import date 
 
 # Import our updated modules
 from ai_service import generate_tender_summary, chat_with_tender, generate_chat_title
@@ -33,16 +34,12 @@ def get_db_connection():
 
 # ----------------- MODELS -----------------
 class Tender(BaseModel):
-    tender_no: str
-    name_of_client: str
     tender_status: str
     received_date: Optional[str] = None
     due_date: Optional[str] = None
-    pre_bidding_date: Optional[str] = None
-    pre_bid_time: Optional[str] = None
-    mode_of_conduct: Optional[str] = None
-    platform_or_address: Optional[str] = None
+    name_of_client: str
     location: Optional[str] = None
+    tender_no: str  # This is our unique key
     tender_open_price: Optional[float] = None
     quoted_value: Optional[float] = 0.0
     description: Optional[str] = None
@@ -55,24 +52,31 @@ class Tender(BaseModel):
     comments: Optional[str] = None
     docs_prepared_by: Optional[str] = None
     financial_year: Optional[str] = "2023-2024"
-
+    pre_bidding_date: Optional[str] = None
+    pre_bid_time: Optional[str] = None
+    mode_of_conduct: Optional[str] = None
+    platform_or_address: Optional[str] = None
 class ChatRequest(BaseModel):
     query: str
     context: dict
     full_text: Optional[str] = ""
 
-# --- New Models for Chat History ---
+# --- Models for Chat History ---
 class SaveMessage(BaseModel):
     session_id: str
     role: str
     content: str
-    title: Optional[str] = None # Used to name the session on first message
+    title: Optional[str] = None 
 
 class TitleRequest(BaseModel):
     first_message: str
 
 class SessionRename(BaseModel):
     title: str
+
+# --- Model for Shortcut Status Update ---
+class StatusUpdate(BaseModel):
+    tender_status: str
 # -----------------------------------
 
 # ----------------- STARTUP DEBUG -----------------
@@ -112,10 +116,9 @@ async def chat_endpoint(req: ChatRequest):
     except Exception as e:
         return {"error": str(e)}
 
-# ----------------- NEW: CHAT HISTORY ROUTES -----------------
+# ----------------- CHAT HISTORY ROUTES -----------------
 @app.get("/chats/sessions")
 def get_sessions():
-    """Fetch all chat sessions for the sidebar"""
     conn = get_db_connection()
     sessions = conn.execute("SELECT * FROM chat_sessions ORDER BY created_at DESC").fetchall()
     conn.close()
@@ -123,7 +126,6 @@ def get_sessions():
 
 @app.get("/chats/history/{session_id}")
 def get_history(session_id: str):
-    """Fetch all messages for a specific chat session"""
     conn = get_db_connection()
     messages = conn.execute(
         "SELECT role, content FROM chat_messages WHERE session_id = ? ORDER BY timestamp ASC",
@@ -134,15 +136,12 @@ def get_history(session_id: str):
 
 @app.post("/chats/message")
 def save_chat_message(data: SaveMessage):
-    """Save a user or AI message to the database"""
     conn = get_db_connection()
     try:
-        # If this is the first message (new session), create the session header
         conn.execute(
             "INSERT OR IGNORE INTO chat_sessions (session_id, title) VALUES (?, ?)",
             (data.session_id, data.title or "New Analysis")
         )
-        # Save the actual message
         conn.execute(
             "INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)",
             (data.session_id, data.role, data.content)
@@ -154,7 +153,6 @@ def save_chat_message(data: SaveMessage):
 
 @app.post("/chats/generate-title")
 def generate_title(req: TitleRequest):
-    """Use AI to generate a short title based on the first document or question"""
     try:
         title = generate_chat_title(req.first_message)
         return {"title": title}
@@ -163,7 +161,6 @@ def generate_title(req: TitleRequest):
 
 @app.put("/chats/sessions/{session_id}")
 def rename_session(session_id: str, data: SessionRename):
-    """Manually rename a session from the sidebar"""
     conn = get_db_connection()
     try:
         conn.execute("UPDATE chat_sessions SET title = ? WHERE session_id = ?", (data.title, session_id))
@@ -172,12 +169,48 @@ def rename_session(session_id: str, data: SessionRename):
     finally:
         conn.close()
 
+# <-- CLONE CHAT FOR SHARING -->
+@app.post("/chats/clone/{session_id}")
+def clone_chat(session_id: str):
+    conn = get_db_connection()
+    try:
+        new_session_id = str(uuid.uuid4())
+        
+        original = conn.execute("SELECT title FROM chat_sessions WHERE session_id = ?", (session_id,)).fetchone()
+        title = (original['title'] + " (Imported)") if original else "Imported Chat"
+        
+        conn.execute("INSERT INTO chat_sessions (session_id, title) VALUES (?, ?)", (new_session_id, title))
+        
+        conn.execute("""
+            INSERT INTO chat_messages (session_id, role, content)
+            SELECT ?, role, content FROM chat_messages WHERE session_id = ?
+        """, (new_session_id, session_id))
+        
+        conn.commit()
+        return {"new_session_id": new_session_id}
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        conn.close()
+
+@app.delete("/chats/sessions/{session_id}")
+def delete_session(session_id: str):
+    conn = get_db_connection()
+    try:
+        conn.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
+        conn.execute("DELETE FROM chat_sessions WHERE session_id = ?", (session_id,))
+        conn.commit()
+        return {"status": "deleted"}
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        conn.close()        
+
 # ----------------- KPI & TENDER DB ROUTES -----------------
 @app.get("/kpi-stats")
 def get_kpi_stats(year: str = "All"):
     conn = get_db_connection()
     cur = conn.cursor()
-    # Updated query to include your specific Win Rate formula and Efficiency Ratio
     query = """
     SELECT 
         COUNT(*) AS total_count,
@@ -197,7 +230,6 @@ def get_kpi_stats(year: str = "All"):
 
 @app.get("/tenders/upcoming-prebid")
 def get_upcoming_prebids():
-    # Logic: Only fetch tenders where pre-bid date is today or in the future
     today = date.today().isoformat()
     conn = get_db_connection()
     query = """
@@ -222,15 +254,29 @@ def get_tenders():
 def add_tender(t: Tender):
     conn = get_db_connection()
     try:
-        conn.execute("""INSERT INTO tenders VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", 
-                      (t.tender_no, t.name_of_client, t.tender_status, t.received_date, t.due_date, 
-                       t.pre_bidding_date, t.pre_bid_time, t.mode_of_conduct, t.platform_or_address, 
-                       t.location, t.tender_open_price, t.quoted_value, t.description, 
-                       t.project_manager, t.emd, t.emd_status, t.tender_fee_status, 
-                       t.price_status, t.source, t.comments, t.docs_prepared_by, t.financial_year))
+        # We explicitly name the 22 columns we are filling. 
+        # SQLite will handle "Sr no" automatically as an auto-increment.
+        query = """
+            INSERT INTO tenders (
+                tender_status, received_date, due_date, name_of_client, location, 
+                tender_no, tender_open_price, quoted_value, description, 
+                project_manager, emd, emd_status, tender_fee_status, price_status, 
+                source, comments, docs_prepared_by, financial_year, pre_bidding_date, 
+                pre_bid_time, mode_of_conduct, platform_or_address
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """
+        
+        conn.execute(query, (
+            t.tender_status, t.received_date, t.due_date, t.name_of_client, t.location,
+            t.tender_no, t.tender_open_price, t.quoted_value, t.description,
+            t.project_manager, t.emd, t.emd_status, t.tender_fee_status, t.price_status,
+            t.source, t.comments, t.docs_prepared_by, t.financial_year, t.pre_bidding_date,
+            t.pre_bid_time, t.mode_of_conduct, t.platform_or_address
+        ))
         conn.commit()
         return {"message": "Success"}
     except Exception as e:
+        print(f"DATABASE ERROR: {e}") # Check your terminal for this!
         return {"error": str(e)}
     finally:
         conn.close()
@@ -250,7 +296,38 @@ def export_tenders():
     finally:
         conn.close()        
 
-@app.put("/tenders/{tender_no}")
+# <-- FIX: QUICK STATUS UPDATE (Placed safely above the PUT route) -->
+@app.patch("/tenders/{tender_no:path}/status")
+def quick_update_status(tender_no: str, update: StatusUpdate):
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "UPDATE tenders SET tender_status = ? WHERE tender_no = ?", 
+            (update.tender_status, tender_no)
+        )
+        conn.commit()
+        return {"message": "Status updated successfully"}
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        conn.close()
+
+@app.delete("/tenders/{tender_no:path}")
+def delete_tender(tender_no: str):
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute("DELETE FROM tenders WHERE tender_no = ?", (tender_no,))
+        conn.commit()
+        if cursor.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Tender not found")
+        return {"message": "Tender deleted successfully"}
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        conn.close()        
+
+# <-- FIX: ADDED :path TO AVOID 404 ERRORS WHEN TENDER NUMBERS HAVE SLASHES -->
+@app.put("/tenders/{tender_no:path}")
 def update_tender(tender_no: str, t: Tender):
     conn = get_db_connection()
     try:
