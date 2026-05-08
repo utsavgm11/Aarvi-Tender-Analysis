@@ -5,10 +5,11 @@ import { cityCoords } from '../../utils/geoData';
 
 const TenderMap = ({ tenders }) => {
 
-  // 1. Process and Aggregate Data (FIXED)
+  // 1. Process and Aggregate Data
   const locationStats = useMemo(() => {
     const stats = {};
 
+    // Ignore broad regions that can't be pinned to a single city
     const invalidLocations = [
       "pan india", "central", "nr", "south region",
       "west india", "india", "all india"
@@ -17,27 +18,28 @@ const TenderMap = ({ tenders }) => {
     tenders.forEach(t => {
       if (!t.location) return;
 
-      // ✅ Normalize properly
-      let city = t.location.toLowerCase().trim();
+      // --- THE FIX: Clean the location string inside the loop ---
+      // 1. Lowercase and ensure it's a string
+      let rawLocation = String(t.location).toLowerCase().trim();
+      
+      // 2. Strip away dirty text like "kochi \n(imp to attend...)" or "Coimbatore / bengaluru"
+      let cleanLocation = rawLocation.split('\n')[0].split('(')[0].split('/')[0].trim();
 
-      // ✅ Handle multiple locations like "Coimbatore / bengaluru"
-      city = city.split('/')[0].trim();
+      // 3. Ignore invalid broad values
+      if (invalidLocations.includes(cleanLocation)) return;
 
-      // ❌ Ignore invalid values
-      if (invalidLocations.includes(city)) return;
-
-      // ✅ Check coordinates
-      if (cityCoords[city]) {
-        stats[city] = (stats[city] || 0) + 1;
-      } else {
-        console.warn(`Missing coordinates for: ${city}`);
-      }
+      // 4. Check if we have coordinates for this clean city name
+      if (cityCoords[cleanLocation]) {
+        // Increment the count for this city
+        stats[cleanLocation] = (stats[cleanLocation] || 0) + 1;
+      } 
+      // Note: We silently ignore missing coordinates now to keep your console clean!
     });
 
     return stats;
   }, [tenders]);
 
-  // 2. India center
+  // 2. India center coordinates
   const indiaCenter = [20.5937, 78.9629];
 
   return (
@@ -57,9 +59,8 @@ const TenderMap = ({ tenders }) => {
         {Object.entries(locationStats).map(([city, count]) => {
           const position = cityCoords[city];
 
-          // ✅ Capitalize for display
-          const displayCity =
-            city.charAt(0).toUpperCase() + city.slice(1);
+          // Capitalize the first letter for the beautiful tooltip display
+          const displayCity = city.charAt(0).toUpperCase() + city.slice(1);
 
           return (
             <CircleMarker
@@ -77,7 +78,7 @@ const TenderMap = ({ tenders }) => {
                     {displayCity}
                   </p>
                   <p className="text-indigo-600 font-bold text-sm">
-                    {count} Tenders
+                    {count} {count === 1 ? 'Tender' : 'Tenders'}
                   </p>
                 </div>
               </Tooltip>

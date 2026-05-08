@@ -1,9 +1,12 @@
 export const cityCoords = {
-  // --- METROS ---
+  // --- METROS & CAPITALS ---
   "mumbai": [19.0760, 72.8777],
   "navi mumbai": [19.0330, 73.0297],
   "delhi": [28.6139, 77.2090],
   "new delhi": [28.6139, 77.2090],
+  "ncr": [28.6139, 77.2090],
+  "noida": [28.5355, 77.3910],
+  "gaziabad": [28.6692, 77.4538],
   "bangalore": [12.9716, 77.5946],
   "bengaluru": [12.9716, 77.5946],
   "hyderabad": [17.3850, 78.4867],
@@ -11,8 +14,10 @@ export const cityCoords = {
   "kolkata": [22.5726, 88.3639],
   "kolkatta": [22.5726, 88.3639],
   "pune": [18.5204, 73.8567],
+  "jaipur": [26.9124, 75.7873],
+  "lucknow": [26.8467, 80.9462],
 
-  // --- INDUSTRIAL HUBS ---
+  // --- INDUSTRIAL & REFINERY HUBS ---
   "hazira": [21.1167, 72.6333],
   "vadodara": [22.3072, 73.1812],
   "bharuch": [21.7051, 72.9959],
@@ -29,12 +34,28 @@ export const cityCoords = {
   "mahul": [19.0169, 72.8978],
   "tarapur": [19.8649, 72.6844],
   "dabhol": [17.5855, 73.1780],
+  "haldia": [22.0257, 88.0583],
+  "panipat": [29.3909, 76.9635],
+  "numaligarh": [26.6346, 93.7431],
+  "digboi": [27.3792, 95.6315],
+  "lepetkata": [27.3512, 94.8540],
+  "bongaigaon": [26.4770, 90.5580],
+  "boingaigaon": [26.4770, 90.5580], // Alias handling
+  "gdt lakwa": [26.9691, 94.8465],
+  "paradip": [20.2741, 86.6493],
+  "vizag": [17.6868, 83.2185],
+  "kakinada": [16.9891, 82.2475],
+  "mangalore": [12.8722, 74.8425],
+  "mangaluru": [12.8722, 74.8425], // Alias handling
+  "padur": [13.2045, 74.7892],
+  "vaghodia": [22.3015, 73.3752],
+  "gandhar": [21.9961, 72.9511],
+  "thal": [18.6657, 72.8741],
 
   // --- NORTH INDIA ---
   "gorakhpur": [26.7606, 83.3732],
   "mathura": [27.4924, 77.6737],
   "agra": [27.1767, 78.0081],
-  "lucknow": [26.8467, 80.9462],
   "kanpur": [26.4499, 80.3319],
   "bareilly": [28.3670, 79.4304],
   "haridwar": [29.9457, 78.1642],
@@ -42,6 +63,10 @@ export const cityCoords = {
   "hisar": [29.1492, 75.7217],
   "bathinda": [30.2110, 74.9455],
   "bhatinda": [30.2110, 74.9455],
+  "barabanki": [26.9258, 81.1923],
+  "varanasi": [25.3176, 82.9739],
+  "chhainsa": [28.3243, 77.3871],
+  "jewar": [28.1299, 77.5615],
 
   // --- CENTRAL INDIA ---
   "bhopal": [23.2599, 77.4126],
@@ -51,46 +76,100 @@ export const cityCoords = {
   "pithampur": [22.6013, 75.6960],
   "malanpur": [26.2800, 78.2000],
   "jhabua": [22.7697, 74.5906],
+  "kailaras": [26.3115, 77.6200],
 
-  // --- EAST INDIA ---
+  // --- EAST & NORTH-EAST INDIA ---
   "barauni": [25.4333, 86.1333],
   "patna": [25.5941, 85.1376],
   "muzaffarpur": [26.1209, 85.3647],
   "dhanbad": [23.7957, 86.4304],
   "sindri": [23.6833, 86.4833],
   "ranchi": [23.3441, 85.3096],
-  "bongaigaon": [26.4770, 90.5580],
+  "ramgarh": [23.6333, 85.5167],
+  "jamshedpur": [22.8046, 86.2029],
   "dibrugarh": [27.4728, 94.9120],
+  "guwahati": [26.1445, 91.7362],
+  "agartala": [23.8315, 91.2868],
+
+  // --- WEST & WEST-CENTRAL INDIA ---
+  "ahmedabad": [23.0225, 72.5714],
+  "nashik": [19.9975, 73.7898],
+  "dolvi": [18.7060, 73.0225],
+  "keshod": [21.3023, 70.2494],
+  "ratnagiri": [16.9902, 73.3120],
+  "usar": [18.4230, 73.0645],
+  "chhara": [20.7570, 70.7303],
+  "chharra": [20.7570, 70.7303], // Alias
+  "surendra nagar": [22.7277, 71.6373],
+  "samakhiali": [23.3284, 70.4705],
+  "palanpur": [24.1724, 72.4346],
+  "jodhpur": [26.2389, 73.0243],
+  "chaksu": [26.6045, 75.9525],
+  "sanganer": [26.8186, 75.7894],
+  "pipava": [20.9238, 71.5050],
+  "miraj": [16.8259, 74.6469],
+  "dapoli": [17.7667, 73.1833],
+  "nagpur": [21.1458, 79.0882],
+  "amravati": [20.9320, 77.7523],
+  "goa": [15.2993, 74.1240],
 
   // --- SOUTH INDIA ---
   "cochin": [9.9312, 76.2673],
   "kochi": [9.9312, 76.2673],
-  "manali": [13.1667, 80.2667], // Chennai refinery area
+  "kochi (imp to attend pre bid)": [9.9312, 76.2673], // Dirty data catch
+  "manali": [13.1667, 80.2667], 
   "nagapattinam": [10.7667, 79.8333],
   "karaikal": [10.9167, 79.8333],
+  "karaikudi": [10.0667, 78.7833],
   "tiruchirappalli": [10.7905, 78.7047],
+  "tiruchirappali": [10.7905, 78.7047], // Alias
   "trichy": [10.7905, 78.7047],
   "coimbatore": [11.0168, 76.9558],
+  "mysuru": [12.2958, 76.6394],
+  "kaiga": [14.8584, 74.4363],
+  "vijaywada": [16.5062, 80.6480],
+  "devangothi": [13.0118, 77.7818],
+  "devangonthi": [13.0118, 77.7818],
+  "bhanur": [17.5147, 78.1408],
+  "kavaratti": [10.5667, 72.6417],
 
-  // --- SPECIAL LOCATIONS ---
+  // --- SPECIAL LOCATIONS & SMALL TOWNS ---
   "vijaipur": [24.0333, 77.1667],
   "bina": [24.2000, 78.2000],
   "pata": [26.6000, 79.6000],
+  "dibiyapur": [26.6338, 79.4442],
+  "auraiya": [26.4661, 79.5100],
   "ramagundam": [18.8000, 79.4500],
   "talcher": [20.9500, 85.2167],
+  "kolaghat": [22.4276, 87.8732],
   "koyali": [22.3100, 73.1300],
+  "dumad": [22.3789, 73.1610],
   "gandhinagar": [23.2156, 72.6369],
   "sabarmati": [23.0300, 72.5800],
   "nhava sheva": [18.9510, 72.9496],
   "jnpt": [18.9430, 72.9490],
+  "daman": [20.3974, 72.8328],
+  "reep": [26.9124, 75.7873], // Rajasthan Energy Env Project fallback
+  "khera": [22.7500, 72.6833],
 
-  // --- STATES / FALLBACK ---
+  // --- STATES / REGION FALLBACKS ---
   "gujarat": [22.2587, 71.1924],
   "maharashtra": [19.7515, 75.7139],
   "rajasthan": [27.0238, 74.2179],
   "odisha": [20.9517, 85.0985],
+  "orissa": [20.9517, 85.0985], // Alias
   "tamilnadu": [11.1271, 78.6569],
   "uttar pradesh": [26.8467, 80.9462],
+  "karnataka": [15.3173, 75.7139],
+  "assam": [26.2006, 92.9376],
+  "tripura": [23.8401, 91.3653],
+  "bihar": [25.0961, 85.3131],
+  "manipur": [24.6637, 93.9063],
+  "telangana": [18.1124, 79.0193],
+  "andhra pradesh": [15.9129, 79.7400],
+  "madhya pradesh": [22.9734, 78.6569],
+  "mp": [22.9734, 78.6569], // Alias
+  "punjab": [31.1471, 75.3412],
 
   // --- INTERNATIONAL ---
   "uae": [23.4241, 53.8478],

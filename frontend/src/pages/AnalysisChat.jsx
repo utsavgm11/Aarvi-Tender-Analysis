@@ -4,57 +4,57 @@ import { v4 as uuidv4 } from 'uuid';
 import { Send, FileUp, Loader2, Bot, User, CheckCircle2 } from 'lucide-react';
 import DecisionCard from '../components/ui/DecisionCard';
 
-// Added onChatUpdated to trigger sidebar refreshes
 const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [activeTender, setActiveTender] = useState(null);
+  const [progress, setProgress] = useState(null);
   
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
+  const pollingInterval = useRef(null);
+  
+  // --- NEW: THE LOCK ---
+  // This prevents the history fetch from wiping the screen during an upload
+  const isOperationActive = useRef(false);
 
-  // 1. Auto-scroll to bottom on new messages
+  // Auto-scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading]);
+  }, [messages, isLoading, progress]);
 
-  // 2. Fetch History when currentSessionId changes
+  // Fetch History
   useEffect(() => {
+    // LOCK CHECK: If we are uploading, DO NOT fetch history and wipe the screen
+    if (isOperationActive.current) return;
+
     if (currentSessionId) {
       setIsLoading(true);
       axios.get(`http://127.0.0.1:8001/chats/history/${currentSessionId}`)
         .then(res => {
           let restoredTender = null;
-          
           const loadedMessages = res.data.map(m => {
             try {
-              // FIX: Use m.content and m.role to match FastAPI backend
               const parsed = JSON.parse(m.content); 
               if (parsed && parsed.isTenderResult) {
-                restoredTender = parsed.data; // Restore context
+                restoredTender = parsed.data;
                 return { type: m.role, result: parsed.data };
               }
-            } catch (e) {
-              // If it's not JSON, it's a normal text message
-            }
-            // FIX: Map backend 'role' to 'type', and 'content' to 'text'
+            } catch (e) {}
             return { type: m.role, text: m.content };
           });
-          
           setMessages(loadedMessages);
           setActiveTender(restoredTender); 
         })
         .catch(err => console.error("Error loading history:", err))
         .finally(() => setIsLoading(false));
     } else {
-      // New Chat State
       setMessages([{ type: 'ai', text: 'Welcome! Please upload your tender document(s) to begin the strategic analysis.' }]);
       setActiveTender(null);
     }
   }, [currentSessionId]);
 
-  // 3. Helper to save messages to the database
   const persistMessage = async (sessionId, role, content, title = null) => {
     try {
       const contentStr = typeof content === 'object' 
@@ -67,19 +67,18 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
         content: contentStr,
         title: title
       });
-      
-      // FIX: Trigger the sidebar to refresh so new chats appear instantly
       if (onChatUpdated) onChatUpdated(); 
-      
     } catch (e) {
       console.error("Failed to save message to DB", e);
     }
   };
 
-  // 4. Handle File Uploads
   const handleFileUpload = async (event) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
+
+    // --- ACTIVATE LOCK ---
+    isOperationActive.current = true;
 
     let sid = currentSessionId;
     let isNewSession = false;
@@ -92,23 +91,34 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
     const fileNames = Array.from(files).map(f => f.name).join(', ');
     const userMsg = `📄 Uploading ${files.length} file(s): ${fileNames}`;
     
+    // Functional update to preserve state
     setMessages(prev => [...prev, { type: 'user', text: userMsg }]);
     setIsLoading(true);
 
-    let chatTitle = "New Analysis";
-    if (isNewSession) {
-      try {
-        const titleRes = await axios.post('http://127.0.0.1:8001/chats/generate-title', { first_message: userMsg });
-        chatTitle = titleRes.data.title;
-      } catch (e) {}
-    }
-
-    await persistMessage(sid, 'user', userMsg, isNewSession ? chatTitle : null);
+    const taskId = `task_${uuidv4()}`;
+    // Initialize UI progress so the bar appears immediately
+    setProgress({ current: 0, total: 100 }); 
 
     const formData = new FormData();
+    formData.append('task_id', taskId); // TASK ID FIRST
     for (let i = 0; i < files.length; i++) {
       formData.append('files', files[i]);
     }
+
+    // --- POLLING LOGIC ---
+    pollingInterval.current = setInterval(async () => {
+      try {
+        const res = await axios.get(`http://127.0.0.1:8001/progress/${taskId}`);
+        if (res.data && res.data.total > 0) {
+          setProgress(res.data);
+          if (res.data.current === res.data.total) {
+            clearInterval(pollingInterval.current);
+          }
+        }
+      } catch (err) {
+        // Silently handle 404s until backend starts the task
+      }
+    }, 1000);
 
     try {
       const response = await axios.post('http://127.0.0.1:8001/analyze-tender', formData, {
@@ -116,32 +126,31 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
       });
       
       const tenderData = response.data.aarvi_intelligence;
-      if (tenderData) setActiveTender(tenderData);
-      
-      setMessages(prev => [...prev, { type: 'ai', result: tenderData }]);
-      await persistMessage(sid, 'ai', tenderData); 
-
+      if (tenderData) {
+        setActiveTender(tenderData);
+        setMessages(prev => [...prev, { type: 'ai', result: tenderData }]);
+        await persistMessage(sid, 'ai', tenderData);
+      }
     } catch (e) {
-      const errorMsg = e.response?.data?.detail || e.message; 
-      const errorText = `Analysis failed: ${errorMsg}`;
+      const errorText = `Analysis failed: ${e.response?.data?.detail || e.message}`;
       setMessages(prev => [...prev, { type: 'ai', text: errorText }]);
-      await persistMessage(sid, 'ai', errorText);
     } finally {
+      // --- CLEANUP AND UNLOCK ---
       setIsLoading(false);
+      setProgress(null);
+      isOperationActive.current = false; // RELEASE THE LOCK
+      clearInterval(pollingInterval.current);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
-  // 5. Handle Text Chat
   const handleChat = async () => {
     if (!input.trim()) return;
+    isOperationActive.current = true; // LOCK
     
     let sid = currentSessionId;
-    let isNewSession = false;
-    
     if (!sid) {
       sid = uuidv4();
-      isNewSession = true;
       onSessionSelect(sid);
     }
 
@@ -150,16 +159,6 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
     setInput('');
     setIsLoading(true);
 
-    let chatTitle = "New Analysis";
-    if (isNewSession) {
-      try {
-        const titleRes = await axios.post('http://127.0.0.1:8001/chats/generate-title', { first_message: userQuery });
-        chatTitle = titleRes.data.title;
-      } catch (e) {}
-    }
-
-    await persistMessage(sid, 'user', userQuery, isNewSession ? chatTitle : null);
-
     try {
       const response = await axios.post('http://127.0.0.1:8001/chat/', { 
         query: userQuery,
@@ -167,22 +166,18 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
         full_text: activeTender?.full_text || "" 
       });
       
-      const aiReply = response.data.reply;
-      setMessages(prev => [...prev, { type: 'ai', text: aiReply }]);
-      await persistMessage(sid, 'ai', aiReply);
-
+      setMessages(prev => [...prev, { type: 'ai', text: response.data.reply }]);
+      await persistMessage(sid, 'ai', response.data.reply);
     } catch (e) {
-      const errorText = "I'm having trouble accessing my strategic memory right now.";
-      setMessages(prev => [...prev, { type: 'ai', text: errorText }]);
-      await persistMessage(sid, 'ai', errorText);
+      setMessages(prev => [...prev, { type: 'ai', text: "Strategic memory error." }]);
     } finally {
       setIsLoading(false);
+      isOperationActive.current = false; // UNLOCK
     }
   };
 
   return (
     <div className="flex flex-col h-full bg-slate-50 relative">
-      {/* Context Indicator */}
       {activeTender && (
         <div className="bg-blue-900 text-white px-4 py-2 flex items-center justify-between text-xs font-medium shrink-0 shadow-md z-10">
           <div className="flex items-center gap-2">
@@ -193,11 +188,10 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
         </div>
       )}
 
-      {/* Message Feed */}
       <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-            {m.type === 'ai' && m.result ? (
+            {m.result ? (
               <DecisionCard result={m.result} onClose={() => {}} />
             ) : (
               <div className={`flex items-start gap-3 max-w-[85%] md:max-w-2xl ${m.type === 'user' ? 'flex-row-reverse' : ''}`}>
@@ -213,16 +207,39 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
             )}
           </div>
         ))}
+        
         {isLoading && (
-          <div className="flex items-center gap-3 text-slate-400 animate-pulse text-sm ml-12">
-            <Loader2 size={16} className="animate-spin" />
-            Strategic Consultant is thinking...
+          <div className="flex justify-start my-4">
+            {progress ? (
+              <div className="w-full max-w-2xl bg-indigo-50 border border-indigo-100 p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 shadow-sm animate-pulse ml-12">
+                <div className="flex items-center gap-3">
+                  <Loader2 className="animate-spin text-indigo-600" size={20} />
+                  <span className="text-indigo-900 font-bold text-sm tracking-wide uppercase">AI Engine Scanning Document...</span>
+                </div>
+                <div className="flex-1 w-full mx-4">
+                  <div className="h-2.5 bg-indigo-200 rounded-full overflow-hidden">
+                    <div 
+                      className="bg-indigo-600 h-full transition-all duration-300 ease-out" 
+                      style={{ width: `${(progress.current / progress.total) * 100}%` }}
+                    ></div>
+                  </div>
+                </div>
+                <span className="text-indigo-700 font-black text-sm">
+                  Pages ({progress.current}/{progress.total})
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 text-slate-400 animate-pulse text-sm ml-12">
+                <Loader2 size={16} className="animate-spin" />
+                Strategic Consultant is thinking...
+              </div>
+            )}
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Chat Input Bar */}
+      {/* Input section remains the same... */}
       <div className="p-4 bg-white border-t shrink-0">
         <div className="max-w-4xl mx-auto flex items-center gap-2 bg-slate-100 rounded-2xl p-1.5 border focus-within:border-blue-400 transition-all">
           <label className="cursor-pointer p-2.5 hover:bg-white rounded-xl text-slate-500 transition-colors">

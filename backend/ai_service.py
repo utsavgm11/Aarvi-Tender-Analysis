@@ -10,9 +10,10 @@ genai.configure(api_key=GEMINI_API_KEY)
 
 def get_model():
     try:
+        # Fallback to standard 2.0 or 1.5 flash models for stability
         return genai.GenerativeModel('gemini-2.5-flash-lite')
     except:
-        return genai.GenerativeModel('gemini-2.0-flash')
+        return genai.GenerativeModel('gemini-2.5-flash')
 
 def get_knowledge_base():
     path = os.path.join("knowledge_base", "Aarvi_Encon", "*.json")
@@ -61,29 +62,31 @@ def format_for_ui(value):
     return str(value).strip()
 
 def ensure_ui_schema(ai_data: dict, logic_data: dict, error_msg: str = None) -> dict:
+    # --- UPDATED: Replaced BQC/PQC with Financial and Technical Quals ---
     template = {
-        "tender_no": "Not Specified", "client_name": "Not Specified", "description": "Not Specified", "tender_open_price": "Not Specified", 
-        "emd": "Not Specified",
-        "bqc_financial": "Not Specified", "bqc_technical": "Not Specified",
-        "pqc_financial": "Not Specified", "pqc_technical": "Not Specified",
+        "tender_no": "Not Specified", "client_name": "Not Specified", "description": "Not Specified", 
+        "tender_open_price": "Not Specified", "emd": "Not Specified",
+        "financial_qualification": "Not Specified", "technical_qualification": "Not Specified",
         "mandatory_compliance": "Not Specified", "scope_of_work": "Not Specified",
         "manpower_count": "Not Specified", "manpower_qual": "Not Specified",
         "shift_duty": "Not Specified", "payment_terms": "Not Specified",
         "penalty_terms": "Not Specified", "similar_work": "Not Specified",
         "bid_decision": "PENDING", "pq_status": "PENDING", 
         "win_probability": "PENDING", "profit_forecast": "PENDING", 
-        "strategic_advice": "Not Specified", "tender_open_price": "Not Specified",
-        "compliance_status": "Not Specified", "compliance_reason": "Not Specified"
+        "strategic_advice": "Not Specified", "compliance_status": "Not Specified", 
+        "compliance_reason": "Not Specified"
     }
     
     if error_msg:
         template["strategic_advice"] = f"Error: {error_msg}"
         return template
 
+    # Merge AI Extraction Data
     for key in ai_data:
         if key in template:
             template[key] = format_for_ui(ai_data[key])
             
+    # Merge Logic Evaluation Data (Overrides AI)
     for key in logic_data:
         if key in template:
             template[key] = str(logic_data[key])
@@ -97,6 +100,7 @@ def generate_tender_summary(tender_text: str = None):
     model = get_model()
     kb_data = get_knowledge_base()
 
+    # --- UPDATED PROMPT: Combined Qualification Extraction ---
     prompt = f"""
     ROLE: Expert Tender Data Extractor.
     KNOWLEDGE BASE (Past Projects): {kb_data}
@@ -104,9 +108,10 @@ def generate_tender_summary(tender_text: str = None):
     TASK: Scan the TENDER TEXT and map findings to the JSON schema below.
     
     CRITICAL INSTRUCTIONS:
-    1. bqc_financial: EXTRACT ONLY explicit "Turnover" or "Net Worth" conditions. If not stated, return "Not Specified". DO NOT HALLUCINATE OR ESTIMATE.
-    2. tender_open_price: Extract the total contract value.
-    3. emd: Look for 'EMD', 'Earnest Money Deposit', or 'Bid Security'. Extract the amount or percentage. If multiple, prioritize the amount. If not stated, return 'Not Specified'.
+    1. financial_qualification: COMBINE all explicit "Turnover", "Net Worth", "Security Deposit" (SD), and "PBG" (Performance Bank Guarantee) conditions. If not stated, return "Not Specified".
+    2. technical_qualification: COMBINE all "Similar Work", "Experience", and core competency requirements.
+    3. tender_open_price: Extract the total contract value.
+    4. emd: Look for 'EMD', 'Earnest Money Deposit', or 'Bid Security'. Extract the amount or percentage. If multiple, prioritize the amount. If not stated, return 'Not Specified'.
     
     JSON SCHEMA (Output ONLY valid JSON):
     {{
@@ -115,10 +120,8 @@ def generate_tender_summary(tender_text: str = None):
       "description": "Short summary",
       "tender_open_price": "Extract numerical contract value",
       "emd": "Extract the EMD amount or percentage",
-      "bqc_financial": "Extract ONLY Turnover/Net Worth conditions",
-      "bqc_technical": "Extract BQC Technical requirements",
-      "pqc_financial": "Extract PBG/Retention clauses",
-      "pqc_technical": "Extract Qualification/Experience requirements",
+      "financial_qualification": "Combine Turnover, Net Worth, PBG, Security Deposit",
+      "technical_qualification": "Combine Similar Work, Experience, Qualification requirements",
       "mandatory_compliance": "Extract PF/ESI/Compliance rules",
       "scope_of_work": ["..."],
       "manpower_count": "Extract headcount",
@@ -134,18 +137,16 @@ def generate_tender_summary(tender_text: str = None):
 
     try:
         response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-        match = re.search(r'\{.*\}', response.text, re.DOTALL)
-        ai_extracted_data = json.loads(match.group(0)) if match else json.loads(response.text)
         
-        # --- NEW: HARD 25 LAKH FILTER ---
-        price_val = clean_price_to_float(ai_extracted_data.get("tender_open_price"))
+        # Robust JSON extraction
+        try:
+            ai_extracted_data = json.loads(response.text)
+        except json.JSONDecodeError:
+            match = re.search(r'\{.*\}', response.text, re.DOTALL)
+            ai_extracted_data = json.loads(match.group(0)) if match else {}
         
+        # Pass to logic.py
         logic_decisions = evaluate_tender_rules(ai_extracted_data, kb_data, tender_text)
-        
-        if price_val > 0 and price_val < 2500000:
-            logic_decisions["bid_decision"] = "NO BID - Under 25 Lakh"
-            logic_decisions["strategic_advice"] = f"NO BID: The tender value (₹{price_val:,.0f}) falls below the company's minimum viability threshold of 25 Lakh INR."
-            logic_decisions["pq_status"] = "Fail"
 
         return ensure_ui_schema(ai_extracted_data, logic_decisions)
     except Exception as e:
@@ -156,7 +157,7 @@ def chat_with_tender(query: str, context: dict, full_text: str = ""):
     prompt = f"Context: {json.dumps(context)}\nFull Doc: {full_text[:50000]}\nQuery: {query}\n\nStrictly answer based on Full Doc using Markdown bullets."
     return model.generate_content(prompt).text  
 
-# ----------------- NEW ADDITION FOR CHAT HISTORY -----------------
+# ----------------- CHAT HISTORY TITLE GENERATOR -----------------
 def generate_chat_title(first_message: str) -> str:
     """
     Generates a concise, 3-4 word title for the sidebar based on the first interaction.
@@ -165,7 +166,6 @@ def generate_chat_title(first_message: str) -> str:
         return "New Analysis"
         
     model = get_model()
-    # Limit the input to the first 1000 characters to save tokens and speed up response
     prompt = f"""
     Generate a short, concise, 3 to 4 word title for a business chat session based on this first message or document snippet:
     "{first_message[:1000]}"
@@ -179,7 +179,6 @@ def generate_chat_title(first_message: str) -> str:
         response = model.generate_content(prompt)
         title = response.text.strip().replace('"', '').replace('\n', '')
         
-        # Fallback if the AI ignores the length constraint
         if len(title) > 35:
             title = title[:32] + "..."
             

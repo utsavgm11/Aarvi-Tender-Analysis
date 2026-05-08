@@ -5,27 +5,25 @@ python-multipart
 
 # Environment & Security
 python-dotenv
-python-jose[cryptography]    # For JWT token handling and Security
-passlib[bcrypt]             # For password hashing (if using local fallback)
-authlib                      # For Google OAuth2 Integration
+python-jose[cryptography]
+passlib[bcrypt]
+authlib
 
 # Database (PostgreSQL)
-sqlalchemy                  # SQL Toolkit and ORM
-psycopg2-binary             # PostgreSQL database adapter
+sqlalchemy
+psycopg2-binary
 
 # AI, LLM & OCR
-google-generativeai          # Gemini AI Integration
-easyocr                      # Deep-learning based OCR for scanned PDFs
-torch                        # Required backend for EasyOCR
-torchvision                  # Required backend for EasyOCR
+google-generativeai
+pytesseract
+Pillow
 
 # Document Processing (PDF, Word, Excel)
-pymupdf                      # High-performance PDF extraction (fitz)
-python-docx                  # Word document processing
-pandas                       # Excel and Data handling
-openpyxl                     # Engine for modern Excel files (.xlsx)
+pymupdf
+python-docx
+pandas
+openpyxl
 
 # Utilities
 typing-extensions
-axios-python-compat          # For consistent API request structures
-uuid                         # For session and tracking IDs
+uuid

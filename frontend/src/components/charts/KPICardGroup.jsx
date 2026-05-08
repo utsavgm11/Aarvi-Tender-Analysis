@@ -1,5 +1,5 @@
 import React from 'react';
-import { Hash, Percent, IndianRupee, TrendingUp } from 'lucide-react';
+import { Hash, Percent, IndianRupee, Briefcase } from 'lucide-react';
 
 const KPICard = ({ title, value, icon, color }) => {
   return (
@@ -34,6 +34,13 @@ const KPICardGroup = ({ stats = {} }) => {
     color="border-slate-300" 
     icon={<Hash size={18}/>} 
   />
+
+   <KPICard 
+  title="Active Pipeline" 
+  value={stats.active_pipeline || 0} 
+  color="border-blue-500" 
+  icon={<Briefcase size={18} className="text-blue-500" />} 
+/>
   
   <KPICard 
     title="Win Rate" 
@@ -49,12 +56,7 @@ const KPICardGroup = ({ stats = {} }) => {
     icon={<IndianRupee size={18}/>} 
   />
   
-  <KPICard 
-    title="Efficiency" 
-    value={Number(stats.active_lost_ratio || 0).toFixed(2)} 
-    color="border-rose-500" 
-    icon={<TrendingUp size={18}/>} 
-  />
+ 
 </div>
   );
 };
