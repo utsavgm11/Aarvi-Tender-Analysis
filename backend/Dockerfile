@@ -1,25 +1,24 @@
-# Use Python 3.10
 FROM python:3.10-slim
 
-# Install Tesseract and system dependencies
+# 1. Install system dependencies + Tesseract
 RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     libtesseract-dev \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Copy requirements and install
-COPY requirements.txt .
+# 2. FIX: Point to the backend folder for requirements
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the backend code
+# 3. Copy the entire project into the container
 COPY . .
 
-# Expose the port Render expects
+# 4. FIX: Move into the backend folder where main.py lives
+WORKDIR /app/backend
+
 EXPOSE 10000
 
-# Start command
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000"]
