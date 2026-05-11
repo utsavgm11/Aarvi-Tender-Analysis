@@ -22,7 +22,9 @@ const MasterDashboard = () => {
     comments: '', docs_prepared_by: '', financial_year: '2023-2024', pre_bidding_date: '',
   });
 
-  const API_URL = "http://127.0.0.1:8001";
+  // This tells the app: Use the Render URL from Vercel, 
+// but fall back to your laptop if the variable isn't found.
+  const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8001";
 
   const fetchTenders = async () => {
     try {

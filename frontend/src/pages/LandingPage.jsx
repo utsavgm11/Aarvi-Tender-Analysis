@@ -9,7 +9,9 @@ const LandingPage = ({ onLoginSuccess }) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const API_URL = "http://127.0.0.1:8001";
+  // This tells the app: Use the Render URL from Vercel, 
+// but fall back to your laptop if the variable isn't found.
+  const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8001"; 
   
   const handleAuth = async (e) => {
     e.preventDefault();

@@ -5,25 +5,25 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     libtesseract-dev \
     gcc \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Set the working directory to the root of the app
 WORKDIR /app
 
-# 3. Copy requirements and install
-# We use the path relative to the root context
+# 2. Copy requirements first (better caching)
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 4. Copy the entire project
+# 3. Copy everything
 COPY . .
 
-# 5. Set Environment Variables so Python can find your code
+# 4. Set the PYTHONPATH so Python can find your modules
 ENV PYTHONPATH=/app/backend
 ENV PORT=10000
 
-# 6. Run from the directory where main.py actually exists
+# 5. Move into the backend folder
 WORKDIR /app/backend
 
-# 7. Start command - no 'backend.' prefix needed if we are inside the folder
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000"]
+# 6. Start with a very detailed command to catch errors
+# We use 'main:app' because we are INSIDE the backend folder
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000", "--log-level", "debug"]

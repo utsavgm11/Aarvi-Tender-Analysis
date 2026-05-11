@@ -7,7 +7,9 @@ const Navbar = ({ title = "Dashboard" }) => {
   const [isBackendOnline, setIsBackendOnline] = useState(false);
   const [notifyCount, setNotifyCount] = useState(0);
   
-  const API_URL = "http://127.0.0.1:8001";
+  // This tells the app: Use the Render URL from Vercel, 
+// but fall back to your laptop if the variable isn't found.
+  const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8001";
 
   useEffect(() => {
     const checkHealthAndNotifications = async () => {
