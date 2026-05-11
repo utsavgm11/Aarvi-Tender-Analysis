@@ -18,8 +18,7 @@ sqlalchemy
 psycopg2-binary
 
 # --- AI & OCR ---
-# Use 'google-genai' as 'google-generativeai' is deprecated in 2026
-google-genai
+google-generativeai
 pytesseract
 Pillow
 
