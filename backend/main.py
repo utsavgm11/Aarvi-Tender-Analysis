@@ -401,6 +401,9 @@ def delete_session(session_id: str):
 @app.get("/kpi-stats")
 def get_kpi_stats(year: str = "All"):
     conn = get_db_connection()
+    if not conn:
+        return {"total_count": 0, "win_rate": 0, "total_won_value": 0, "active_pipeline": 0}
+    
     try:
         cur = conn.cursor()
         query = """
@@ -408,21 +411,11 @@ def get_kpi_stats(year: str = "All"):
             COUNT(*) AS total_count,
             ROUND(
                 CAST(
-                    SUM(
-                        CASE
-                            WHEN tender_status = 'Tender Won' THEN 1
-                            ELSE 0
-                        END
-                    ) AS NUMERIC
+                    SUM(CASE WHEN tender_status = 'Tender Won' THEN 1 ELSE 0 END) AS NUMERIC
                 ) * 100.0 /
                 NULLIF(
                     CAST(
-                        SUM(
-                            CASE
-                                WHEN tender_status IN ('Tender Won', 'Tender Lost') THEN 1
-                                ELSE 0
-                            END
-                        ) AS NUMERIC
+                        SUM(CASE WHEN tender_status IN ('Tender Won', 'Tender Lost') THEN 1 ELSE 0 END) AS NUMERIC
                     ), 0
                 ),
             1) AS win_rate,
@@ -437,10 +430,7 @@ def get_kpi_stats(year: str = "All"):
             SUM(
                 CASE
                     WHEN tender_status IN ('Tender Quoted', 'Quoted', 'Quoted Active')
-                    AND (
-                        due_date::text >= CURRENT_DATE::text
-                        OR due_date IS NULL
-                    )
+                    AND (due_date::text >= CURRENT_DATE::text OR due_date IS NULL)
                     THEN 1
                     ELSE 0
                 END
@@ -451,14 +441,21 @@ def get_kpi_stats(year: str = "All"):
         """
         cur.execute(query, (year, year))
         row = cur.fetchone()
-        result = dict(row) if row else {}
         
-        if result.get("active_pipeline") is None:
-            result["active_pipeline"] = 0
-        if result.get("total_won_value") is None:
-            result["total_won_value"] = 0
+        # --- CRITICAL FIX: Explicit Type Conversion for React Charts ---
+        if row:
+            return {
+                "total_count": int(row.get("total_count") or 0),
+                "win_rate": float(row.get("win_rate") or 0.0),
+                "total_won_value": float(row.get("total_won_value") or 0.0),
+                "active_pipeline": int(row.get("active_pipeline") or 0)
+            }
+        
+        return {"total_count": 0, "win_rate": 0, "total_won_value": 0, "active_pipeline": 0}
 
-        return result
+    except Exception as e:
+        print(f"❌ KPI Error: {e}")
+        return {"error": str(e)}
     finally:
         if conn: conn.close()
 

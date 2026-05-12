@@ -133,15 +133,15 @@ def generate_tender_summary(tender_text: str = None):
     2. description: Provide a 3-bullet point summary of the overall project.
     3. financial_qualification: COMBINE all explicit "Turnover", "Net Worth", "Security Deposit", and "PBG" conditions. Use bullets for each requirement.
     4. technical_qualification: COMBINE all "Similar Work" and "Experience" requirements into a bulleted list.
+    5. If exact keywords are not found, identify equivalent financial or value-related statements and extract them. Do NOT return empty if partial financial information exists.
     
     JSON SCHEMA (Output ONLY valid JSON):
     {{
       "tender_no": "Find the Tender/RFQ number",
       "client_name": "Extract Client Name",
-      "description": "3-4 concise bullet points summarizing the tender",
-      "tender_open_price": "Extract numerical contract value",
+      "tender_open_price": "Extract total tender value. Look for terms like 'Total Financial Limit', 'Estimated Value', 'Contract Value', 'SOR Value', or any total cost mentioned. If found, return numeric value. If not explicitly labeled, infer from context."
       "emd": "Extract the EMD amount or percentage",
-      "financial_qualification": "Bulleted list of Turnover, Net Worth, PBG, and SD requirements",
+      "financial_qualification": "Extract Bulleted list of ANY financial conditions including Turnover, Net Worth, PBG, Security Deposit, Tender Value, or pricing constraints. If Turnover/Net Worth are missing, still extract PBG/SD and mark as "No explicit turnover requirement".",
       "technical_qualification": "Bulleted list of Experience and Competency requirements",
       "mandatory_compliance": "Bulleted list of PF/ESI/Statutory rules",
       "scope_of_work": "Bulleted list of major deliverables and tasks",
