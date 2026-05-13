@@ -13,7 +13,7 @@ import {
 // --- CHANGED: Dynamic API routing ---
 // This automatically uses localhost when you are coding, and your live Vercel URL when hosted.
 // ✅ Constant: Always talk to the cloud backend
-const API_BASE_URL = "https://aarvi-tender-api.onrender.com"; // ⚠️ REPLACE THIS WITH YOUR ACTUAL LIVE BACKEND LINK
+const API_BASE_URL = import.meta.env.VITE_API_URL || "https://aarvi-tender-api.onrender.com";// ⚠️ REPLACE THIS WITH YOUR ACTUAL LIVE BACKEND LINK
 
 const AnalyticsDashboard = ({ onBack }) => {
   const [tenders, setTenders] = useState([]);
@@ -24,14 +24,23 @@ const AnalyticsDashboard = ({ onBack }) => {
   const [error, setError] = useState(null);
 
   // 1. Unified Fetch Logic
-  // Using selectedYear as a dependency ensures the backend filter is applied
+  // ✅ CRITICAL UPDATE: Fetching now includes the Manager Silo logic for both Tenders and KPIs
   const fetchData = useCallback(async (isAutoPoll = false) => {
     if (!isAutoPoll) setIsRefreshing(true);
     try {
-      // --- CHANGED: Replaced hardcoded 127.0.0.1 with dynamic API_BASE_URL ---
+      const managerName = localStorage.getItem('managerName');
+      
+      const queryParams = {};
+      if (managerName && managerName !== 'undefined' && managerName !== 'null') {
+        queryParams.manager = managerName;
+      }
+
+      // Add the year to the KPI query params specifically
+      const kpiParams = { ...queryParams, year: selectedYear };
+
       const [tenderRes, kpiRes] = await Promise.all([
-        axios.get(`${API_BASE_URL}/tenders`),
-        axios.get(`${API_BASE_URL}/kpi-stats?year=${selectedYear}`)
+        axios.get(`${API_BASE_URL}/tenders`, { params: queryParams }),
+        axios.get(`${API_BASE_URL}/kpi-stats`, { params: kpiParams })
       ]);
       
       setTenders(tenderRes.data);

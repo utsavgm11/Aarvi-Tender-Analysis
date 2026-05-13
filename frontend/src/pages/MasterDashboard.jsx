@@ -23,11 +23,22 @@ const MasterDashboard = () => {
   });
 
   // UPDATED: Now safely falls back to your Live Cloud URL
-  const API_URL = import.meta.env.VITE_API_URL || "https://aarvi-tender-api.onrender.com";
+  const API_BASE_URL = import.meta.env.VITE_API_URL || "https://aarvi-tender-api.onrender.com";
 
+  // ✅ CRITICAL UPDATE: Fetching now includes the Manager Silo logic
   const fetchTenders = async () => {
     try {
-      const res = await axios.get(`${API_URL}/tenders`);
+      const managerName = localStorage.getItem('managerName');
+      
+      const queryParams = {};
+      if (managerName && managerName !== 'undefined' && managerName !== 'null') {
+        queryParams.manager = managerName;
+      }
+
+      const res = await axios.get(`${API_URL}/tenders`, {
+        params: queryParams
+      });
+      
       setTenders(res.data);
     } catch (err) { console.error("Fetch Error:", err); }
   };

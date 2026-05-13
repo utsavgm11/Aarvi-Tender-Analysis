@@ -56,22 +56,32 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
   }, [currentSessionId]);
 
   const persistMessage = async (sessionId, role, content, title = null) => {
-    try {
-      const contentStr = typeof content === 'object' 
-        ? JSON.stringify({ isTenderResult: true, data: content }) 
-        : content;
+  try {
+    // 1. Get the logged-in user's email
+    const userEmail = localStorage.getItem('userEmail');
 
-      await axios.post('http://127.0.0.1:8001/chats/message', {
-        session_id: sessionId,
-        role: role,
-        content: contentStr,
-        title: title
-      });
-      if (onChatUpdated) onChatUpdated(); 
-    } catch (e) {
-      console.error("Failed to save message to DB", e);
-    }
-  };
+    // 2. Format the content (keeping your logic for tender results)
+    const contentStr = typeof content === 'object' 
+      ? JSON.stringify({ isTenderResult: true, data: content }) 
+      : content;
+
+    // 3. Dynamic API URL (Better than hardcoding)
+    const API_BASE_URL = import.meta.env.VITE_API_URL || "https://aarvi-tender-api.onrender.com";
+
+    await axios.post(`${API_BASE}/chats/message`, {
+      session_id: sessionId,
+      role: role,
+      content: contentStr,
+      title: title,
+      user_email: userEmail // ✅ CRITICAL: Linking the message to the user
+    });
+
+    if (onChatUpdated) onChatUpdated(); 
+  } catch (e) {
+    console.error("❌ Failed to save message to DB:", e);
+    // If you see 'Network Error' here, ensure your Python terminal is running
+  }
+};
 
   const handleFileUpload = async (event) => {
     const files = event.target.files;
@@ -175,6 +185,8 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
       isOperationActive.current = false; // UNLOCK
     }
   };
+
+  const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8001";
 
   return (
     <div className="flex flex-col h-full bg-slate-50 relative">

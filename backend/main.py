@@ -100,6 +100,7 @@ class SaveMessage(BaseModel):
     role: str
     content: str
     title: Optional[str] = None
+    user_email: str
 
 class TitleRequest(BaseModel):
     first_message: str
@@ -213,21 +214,21 @@ def login(req: AuthRequest):
     conn = get_db_connection()
     try:
         cur = conn.cursor()
-        # Find user by email
-        cur.execute("SELECT email, password_hash, role FROM users WHERE email = %s", (req.email.lower(),))
+        # Ensure we fetch the manager_name
+        cur.execute("SELECT email, password_hash, role, manager_name FROM users WHERE email = %s", (req.email.lower(),))
         user = cur.fetchone()
 
         if not user or not pwd_context.verify(req.password, user['password_hash']):
             raise HTTPException(status_code=401, detail="Invalid email or password")
 
-        # Return info that the frontend will store in localStorage
         return {
             "status": "success",
             "email": user['email'],
-            "role": user['role']
+            "role": user['role'],
+            "manager_name": user['manager_name'] # <--- SENDING THE KEY
         }
     finally:
-        if conn: conn.close()            
+        if conn: conn.close()        
 
 # ----------------- CHAT -----------------
 @app.post("/chat/")
@@ -244,22 +245,37 @@ async def chat_endpoint(req: ChatRequest):
 
 # ----------------- CHAT HISTORY -----------------
 @app.get("/chats/sessions")
-def get_sessions(q: Optional[str] = None):
+def get_sessions(email: str, q: Optional[str] = None):
     conn = get_db_connection()
+    if not conn:
+        return []
+        
     try:
         cur = conn.cursor()
+        
+        # 1. Base Query: Always filter by the user's email
         if q:
+            # Filtering by both user email AND search query
             query = """
                 SELECT * FROM chat_sessions
-                WHERE title ILIKE %s
+                WHERE user_email = %s AND title ILIKE %s
                 ORDER BY created_at DESC
             """
-            cur.execute(query, (f"%{q}%",))
+            cur.execute(query, (email, f"%{q}%"))
         else:
-            cur.execute("SELECT * FROM chat_sessions ORDER BY created_at DESC")
+            # Filtering only by user email
+            query = """
+                SELECT * FROM chat_sessions 
+                WHERE user_email = %s 
+                ORDER BY created_at DESC
+            """
+            cur.execute(query, (email,))
         
         sessions = cur.fetchall()
         return [dict(s) for s in sessions]
+    except Exception as e:
+        print(f"❌ Sidebar Fetch Error: {e}")
+        return []
     finally:
         if conn: conn.close()
 
@@ -398,17 +414,39 @@ def delete_session(session_id: str):
         if conn: conn.close()
 
 # ----------------- KPI -----------------
+# ----------------- KPI -----------------
 @app.get("/kpi-stats")
-def get_kpi_stats(year: str = "All"):
+def get_kpi_stats(year: str = "All", manager: str = None): # ✅ ADDED MANAGER PARAMETER
     conn = get_db_connection()
     if not conn:
         return {"total_count": 0, "win_rate": 0, "total_won_value": 0, "active_pipeline": 0}
     
     try:
         cur = conn.cursor()
-        query = """
+        
+        # --- ✅ NEW: DYNAMIC WHERE BUILDER ---
+        where_clauses = ["tender_status != 'Quoted Legacy'"]
+        params = []
+
+        if year != "All":
+            where_clauses.append("financial_year = %s")
+            params.append(year)
+
+        # Apply Silo Filter
+        if manager and manager not in ["null", "None", "undefined", ""]:
+            m_lower = manager.lower().strip()
+            # Handle specific multi-name and typo variations found in your DB
+            if m_lower == "manvendra":
+                where_clauses.append("(project_manager ILIKE %s OR project_manager ILIKE '%%Mannevdra%%' OR project_manager ILIKE '%%Manvedra%%' OR project_manager ILIKE '%%Manvennra%%')")
+            else:
+                where_clauses.append("project_manager ILIKE %s")
+            params.append(f"%{manager}%")
+
+        where_stmt = " AND ".join(where_clauses)
+
+        query = f"""
         SELECT
-            -- ✅ UPDATED: Total Participated (Won + Lost + Quoted + Cancelled)
+            -- Total Participated (Won + Lost + Quoted + Cancelled)
             SUM(
                 CASE 
                     WHEN tender_status IN ('Tender Won', 'Tender Lost', 'Tender Quoted', 'Quoted', 'Quoted Active', 'Tender Cancelled') 
@@ -446,16 +484,15 @@ def get_kpi_stats(year: str = "All"):
                 END
             ) AS active_pipeline
         FROM tenders
-        WHERE (%s = 'All' OR financial_year = %s)
-        AND tender_status != 'Quoted Legacy'
+        WHERE {where_stmt}
         """
-        cur.execute(query, (year, year))
+        
+        cur.execute(query, params)
         row = cur.fetchone()
         
         # --- CRITICAL: Type Conversion for React Charts ---
         if row:
             return {
-                # ✅ Map total_participated to total_count for the frontend
                 "total_count": int(row.get("total_participated") or 0),
                 "win_rate": float(row.get("win_rate") or 0.0),
                 "total_won_value": float(row.get("total_won_value") or 0.0),
@@ -469,7 +506,6 @@ def get_kpi_stats(year: str = "All"):
         return {"error": str(e)}
     finally:
         if conn: conn.close()
-
 # ----------------- UPCOMING PREBID -----------------
 @app.get("/tenders/upcoming-prebid")
 def get_upcoming_prebids():
@@ -490,14 +526,28 @@ def get_upcoming_prebids():
         if conn: conn.close()
 
 # ----------------- GET TENDERS -----------------
+# ----------------- GET TENDERS -----------------
 @app.get("/tenders")
-def get_tenders():
+def get_tenders(manager: str = None):
     conn = get_db_connection()
     today = datetime.now().strftime('%Y-%m-%d')
     try:
         cur = conn.cursor()
-        query = f"""
-            SELECT * FROM tenders
+        query = "SELECT * FROM tenders WHERE 1=1"
+        params = []
+
+        # Apply Silo Filter for Project Managers
+        if manager and manager not in ["null", "None", "undefined", ""]:
+            m_lower = manager.lower().strip()
+            # Handle specific multi-name and typo variations found in your DB
+            if m_lower == "manvendra":
+                query += " AND (project_manager ILIKE %s OR project_manager ILIKE '%%Mannevdra%%' OR project_manager ILIKE '%%Manvedra%%' OR project_manager ILIKE '%%Manvennra%%')"
+            else:
+                query += " AND project_manager ILIKE %s"
+            params.append(f"%{manager}%")
+
+        # Restore your original advanced sorting logic
+        query += f"""
             ORDER BY 
                 CASE 
                     WHEN due_date >= '{today}' THEN 0 
@@ -510,12 +560,15 @@ def get_tenders():
                     WHEN due_date < '{today}' THEN due_date 
                 END DESC
         """
-        cur.execute(query)
+        
+        cur.execute(query, params)
         tenders = cur.fetchall()
         return [dict(t) for t in tenders]
+    except Exception as e:
+        print(f"❌ Get Tenders Error: {e}")
+        return []
     finally:
         if conn: conn.close()
-
 # ----------------- ADD TENDER -----------------
 @app.post("/tenders")
 def add_tender(t: Tender):

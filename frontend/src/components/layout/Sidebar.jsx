@@ -89,7 +89,7 @@ const ChatItem = ({ chat, currentSessionId, onSelect, onRename, onDelete }) => {
     </div>
   );
 };
-
+const API_BASE_URL = import.meta.env.VITE_API_URL || "https://aarvi-tender-api.onrender.com";
 // --- Main Sidebar Component ---
 const Sidebar = ({ isOpen, onClose, activeTab, setActiveTab, currentSessionId, onSessionSelect }) => {
   const [sessions, setSessions] = useState([]);
@@ -105,14 +105,27 @@ const Sidebar = ({ isOpen, onClose, activeTab, setActiveTab, currentSessionId, o
     window.location.href = "/"; // Instantly redirects and drops them back to the Secure Gate
   };
 
-  const fetchSessions = async (query = searchQuery) => {
-    try {
-      const res = await axios.get(`http://127.0.0.1:8001/chats/sessions?q=${encodeURIComponent(query)}`);
-      setSessions(res.data);
-    } catch (err) {
-      console.error("Error fetching sessions:", err);
+  const fetchSessions = async () => {
+  try {
+    // 1. Grab the email you saved during login
+    const userEmail = localStorage.getItem('userEmail');
+
+    // 2. If no email, don't even try (prevents the 422 error)
+    if (!userEmail) {
+      console.warn("No user email found in storage");
+      return;
     }
-  };
+
+    // 3. Send the request with the 'email' parameter
+    const res = await axios.get(`${API_URL}/chats/sessions`, {
+      params: { email: userEmail } // This MUST match the backend variable name
+    });
+
+    setSessions(res.data);
+  } catch (err) {
+    console.error("Error fetching sessions:", err);
+  }
+};
 
   useEffect(() => {
     const delayDebounceFn = setTimeout(() => {
@@ -179,7 +192,7 @@ const Sidebar = ({ isOpen, onClose, activeTab, setActiveTab, currentSessionId, o
             </button>
 
             {/* --- NEW: PROTECTED ROUTES (Admin Only) --- */}
-            {userRole === 'admin' && (
+            {(userRole === 'admin' || userRole === 'project_manager') && (
               <>
                 <button 
                   onClick={() => { setActiveTab('dashboard'); if (window.innerWidth < 768) onClose(); }} 

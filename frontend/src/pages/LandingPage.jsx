@@ -11,7 +11,7 @@ const LandingPage = ({ onLoginSuccess }) => {
 
   // This tells the app: Use the Render URL from Vercel, 
 // but fall back to your laptop if the variable isn't found.
-  const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8001"; 
+  const API_BASE_URL = import.meta.env.VITE_API_URL || "https://aarvi-tender-api.onrender.com";
   
   const handleAuth = async (e) => {
     e.preventDefault();
@@ -26,6 +26,8 @@ const LandingPage = ({ onLoginSuccess }) => {
         // 2. Save to Vault
         localStorage.setItem('userRole', res.data.role);
         localStorage.setItem('userEmail', res.data.email);
+        // ✅ NEW: Save the Project Manager's Name for the Dashboards
+        localStorage.setItem('managerName', res.data.manager_name || ''); 
         
         // 3. The Bulletproof Gate Opener
         if (typeof onLoginSuccess === 'function') {
