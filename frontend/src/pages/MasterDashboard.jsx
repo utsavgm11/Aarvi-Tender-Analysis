@@ -35,7 +35,7 @@ const MasterDashboard = () => {
         queryParams.manager = managerName;
       }
 
-      const res = await axios.get(`${API_URL}/tenders`, {
+      const res = await axios.get(`${API_BASE_URL}/tenders`, {
         params: queryParams
       });
       
@@ -49,7 +49,7 @@ const MasterDashboard = () => {
 
   const handleStatusChange = async (tender_no, newStatus) => {
     try {
-      await axios.patch(`${API_URL}/tenders/${encodeURIComponent(tender_no)}/status`, { tender_status: newStatus });
+      await axios.patch(`${API_BASE_URL}/tenders/${encodeURIComponent(tender_no)}/status`, { tender_status: newStatus });
       fetchTenders(); 
     } catch (err) { alert("Error Updating: " + (err.response?.data?.error || err.message)); }
   };
@@ -92,9 +92,9 @@ const MasterDashboard = () => {
     try {
       setLoading(true);
       if (modalMode === 'add') {
-        await axios.post(`${API_URL}/tenders`, cleanedData);
+        await axios.post(`${API_BASE_URL}/tenders`, cleanedData);
       } else {
-        await axios.put(`${API_URL}/tenders/${encodeURIComponent(formData.tender_no)}`, cleanedData);
+        await axios.put(`${API_BASE_URL}/tenders/${encodeURIComponent(formData.tender_no)}`, cleanedData);
       }
       setIsModalOpen(false);
       fetchTenders().finally(() => setLoading(false));
@@ -109,7 +109,7 @@ const MasterDashboard = () => {
     if (window.confirm(`Are you sure you want to permanently delete Tender: ${tenderNo}?`)) {
       try {
         setLoading(true);
-        await axios.delete(`${API_URL}/tenders/${encodeURIComponent(tenderNo)}`);
+        await axios.delete(`${API_BASE_URL}/tenders/${encodeURIComponent(tenderNo)}`);
         setIsModalOpen(false); 
         await fetchTenders(); 
       } catch (err) {
@@ -123,8 +123,8 @@ const MasterDashboard = () => {
   // UPDATED: Dynamic Export based on selected FY
   const handleDownload = () => {
     const url = selectedFY === 'All' 
-      ? `${API_URL}/export-tenders` 
-      : `${API_URL}/export-tenders?fy=${selectedFY}`;
+      ? `${API_BASE_URL}/export-tenders` 
+      : `${API_BASE_URL}/export-tenders?fy=${selectedFY}`;
     window.open(url, '_blank');
   };
 

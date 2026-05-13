@@ -9,16 +9,16 @@ const Navbar = ({ title = "Dashboard" }) => {
   
   // This tells the app: Use the Render URL from Vercel, 
 // but fall back to your laptop if the variable isn't found.
-  const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8001";
+  const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8001";
 
   useEffect(() => {
     const checkHealthAndNotifications = async () => {
       try {
-        await axios.get(`${API_URL}/health`, { timeout: 2000 });
+        await axios.get(`${API_BASE_URL}/health`, { timeout: 2000 });
         setIsBackendOnline(true);
         
         // Fetch Notification Count
-        const res = await axios.get(`${API_URL}/tenders/upcoming-prebid`);
+        const res = await axios.get(`${API_BASE_URL}/tenders/upcoming-prebid`);
         setNotifyCount(res.data.length);
       } catch (error) {
         setIsBackendOnline(false);

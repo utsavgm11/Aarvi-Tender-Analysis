@@ -68,7 +68,7 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
     // 3. Dynamic API URL (Better than hardcoding)
     const API_BASE_URL = import.meta.env.VITE_API_URL || "https://aarvi-tender-api.onrender.com";
 
-    await axios.post(`${API_BASE}/chats/message`, {
+    await axios.post(`${API_BASE_URL}/chats/message`, {
       session_id: sessionId,
       role: role,
       content: contentStr,
@@ -186,7 +186,7 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
     }
   };
 
-  const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8001";
+  const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8001";
 
   return (
     <div className="flex flex-col h-full bg-slate-50 relative">

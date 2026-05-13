@@ -21,7 +21,7 @@ const LandingPage = ({ onLoginSuccess }) => {
     try {
       if (isLoginMode) {
         // 1. Ask backend
-        const res = await axios.post(`${API_URL}/login`, { email, password });
+        const res = await axios.post(`${API_BASE_URL}/login`, { email, password });
         
         // 2. Save to Vault
         localStorage.setItem('userRole', res.data.role);
@@ -41,7 +41,7 @@ const LandingPage = ({ onLoginSuccess }) => {
         
       } else {
         // SIGNUP
-        await axios.post(`${API_URL}/signup`, { email, password });
+        await axios.post(`${API_BASE_URL}/signup`, { email, password });
         setIsLoginMode(true);
         setError("Account created successfully! Please log in.");
       }
