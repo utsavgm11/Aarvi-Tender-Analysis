@@ -168,11 +168,24 @@ const MasterDashboard = () => {
   }, [tenders, searchTerm, selectedFY, today]);
 
   const stats = useMemo(() => ({
-    totalActive: tenders.filter(t => t.due_date && new Date(t.due_date) >= today && !['Tender Won', 'Tender Lost', 'Tender Cancelled', 'Tender Regret'].includes(t.tender_status)).length,
-    quoted: tenders.filter(t => t.tender_status === 'Tender Quoted').length,
-    won: tenders.filter(t => t.tender_status === 'Tender Won').length,
-    lost: tenders.filter(t => t.tender_status === 'Tender Lost').length,
-  }), [tenders, today]);
+  // 1. Total Active (Kept as original logic: Live tenders with future deadlines)
+  totalActive: tenders.filter(t => 
+    t.due_date && 
+    new Date(t.due_date) >= today && 
+    !['Tender Won', 'Tender Lost', 'Tender Cancelled', 'Tender Regret'].includes(t.tender_status)
+  ).length,
+
+  // 2. Tender Quoted (UPDATED: Now includes Won + Lost + Quoted + Cancelled)
+  quoted: tenders.filter(t => 
+    ['Tender Won', 'Tender Lost', 'Tender Quoted', 'Quoted', 'Quoted Active', 'Tender Cancelled'].includes(t.tender_status)
+  ).length,
+
+  // 3. Tenders Won
+  won: tenders.filter(t => t.tender_status === 'Tender Won').length,
+
+  // 4. Tenders Lost
+  lost: tenders.filter(t => t.tender_status === 'Tender Lost').length,
+}), [tenders, today]);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });

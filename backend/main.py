@@ -237,7 +237,7 @@ async def chat_endpoint(req: ChatRequest):
             query=req.query,
             context=req.context,
             full_text=req.full_text
-        )
+        )@app.post("/login")
         return {"reply": reply}
     except Exception as e:
         return {"error": str(e)}
@@ -408,7 +408,15 @@ def get_kpi_stats(year: str = "All"):
         cur = conn.cursor()
         query = """
         SELECT
-            COUNT(*) AS total_count,
+            -- ✅ UPDATED: Total Participated (Won + Lost + Quoted + Cancelled)
+            SUM(
+                CASE 
+                    WHEN tender_status IN ('Tender Won', 'Tender Lost', 'Tender Quoted', 'Quoted', 'Quoted Active', 'Tender Cancelled') 
+                    THEN 1 ELSE 0 
+                END
+            ) AS total_participated,
+
+            -- Win Rate (Won vs Decided)
             ROUND(
                 CAST(
                     SUM(CASE WHEN tender_status = 'Tender Won' THEN 1 ELSE 0 END) AS NUMERIC
@@ -420,6 +428,7 @@ def get_kpi_stats(year: str = "All"):
                 ),
             1) AS win_rate,
             
+            -- Total Revenue (Won only)
             SUM(
                 CASE
                     WHEN tender_status = 'Tender Won' THEN CAST(NULLIF(tender_open_price::text, '') AS NUMERIC)
@@ -427,6 +436,7 @@ def get_kpi_stats(year: str = "All"):
                 END
             ) AS total_won_value,
             
+            -- Active Pipeline (Quoted but not yet decided)
             SUM(
                 CASE
                     WHEN tender_status IN ('Tender Quoted', 'Quoted', 'Quoted Active')
@@ -442,10 +452,11 @@ def get_kpi_stats(year: str = "All"):
         cur.execute(query, (year, year))
         row = cur.fetchone()
         
-        # --- CRITICAL FIX: Explicit Type Conversion for React Charts ---
+        # --- CRITICAL: Type Conversion for React Charts ---
         if row:
             return {
-                "total_count": int(row.get("total_count") or 0),
+                # ✅ Map total_participated to total_count for the frontend
+                "total_count": int(row.get("total_participated") or 0),
                 "win_rate": float(row.get("win_rate") or 0.0),
                 "total_won_value": float(row.get("total_won_value") or 0.0),
                 "active_pipeline": int(row.get("active_pipeline") or 0)
