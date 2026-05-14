@@ -6,3 +6,5 @@ historical_data/
 Master_Tender_Cleaned_2018_2024.xlsx
 Cleaned_Master_Tenders.xlsx
 backend/tender_data.db
+setup_user.py
+backend/knowledge_base/
