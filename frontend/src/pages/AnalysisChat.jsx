@@ -172,6 +172,9 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
     setInput('');
     setIsLoading(true);
 
+    // ✅ NEW: Tell the database to save the USER'S question!
+    await persistMessage(sid, 'user', userQuery);
+
     try {
       const response = await axios.post(`${API_BASE_URL}/chat/`, { 
         query: userQuery,
@@ -180,6 +183,8 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
       });
       
       setMessages(prev => [...prev, { type: 'ai', text: response.data.reply }]);
+      
+      // Tell the database to save the AI's reply
       await persistMessage(sid, 'ai', response.data.reply);
     } catch (e) {
       setMessages(prev => [...prev, { type: 'ai', text: "Strategic memory error." }]);
