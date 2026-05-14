@@ -25,13 +25,16 @@ const MasterDashboard = () => {
   // UPDATED: Now safely falls back to your Live Cloud URL
   const API_BASE_URL = import.meta.env.VITE_API_URL || "https://aarvi-tender-api.onrender.com";
 
-  // ✅ CRITICAL UPDATE: Fetching now includes the Manager Silo logic
+ // ✅ CRITICAL UPDATE: Bypasses the Silo if the user is an Admin
   const fetchTenders = async () => {
     try {
       const managerName = localStorage.getItem('managerName');
+      const userRole = localStorage.getItem('userRole'); // Grab the role!
       
       const queryParams = {};
-      if (managerName && managerName !== 'undefined' && managerName !== 'null') {
+      
+      // ONLY apply the manager filter if the user is a project_manager
+      if (userRole !== 'admin' && managerName && managerName !== 'undefined' && managerName !== 'null') {
         queryParams.manager = managerName;
       }
 

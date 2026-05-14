@@ -24,14 +24,18 @@ const AnalyticsDashboard = ({ onBack }) => {
   const [error, setError] = useState(null);
 
   // 1. Unified Fetch Logic
-  // ✅ CRITICAL UPDATE: Fetching now includes the Manager Silo logic for both Tenders and KPIs
+  // 1. Unified Fetch Logic
+  // ✅ CRITICAL UPDATE: Fetching now includes the Manager Silo logic and Admin Bypass
   const fetchData = useCallback(async (isAutoPoll = false) => {
     if (!isAutoPoll) setIsRefreshing(true);
     try {
       const managerName = localStorage.getItem('managerName');
+      const userRole = localStorage.getItem('userRole'); // Grab the role!
       
       const queryParams = {};
-      if (managerName && managerName !== 'undefined' && managerName !== 'null') {
+      
+      // ONLY apply the manager filter if the user is a project_manager
+      if (userRole !== 'admin' && managerName && managerName !== 'undefined' && managerName !== 'null') {
         queryParams.manager = managerName;
       }
 
@@ -55,6 +59,7 @@ const AnalyticsDashboard = ({ onBack }) => {
     }
   }, [selectedYear]);
 
+  
   // 2. Initial load and Live Polling
   useEffect(() => {
     fetchData();
