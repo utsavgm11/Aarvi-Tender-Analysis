@@ -4,6 +4,7 @@ import {
   Target, Clock, CheckCircle, XCircle, FileText, 
   Search, Plus, Edit3, X, Trash2
 } from 'lucide-react';
+import PostBidForm from '../components/ui/PostBidForm'; // NEW: Imported the PostBidForm
 
 const MasterDashboard = () => {
   const [tenders, setTenders] = useState([]);
@@ -12,6 +13,10 @@ const MasterDashboard = () => {
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState('add');
+  
+  // NEW: Post-Bid Intelligence States
+  const [isPostBidModalOpen, setIsPostBidModalOpen] = useState(false);
+  const [selectedTenderForPostBid, setSelectedTenderForPostBid] = useState(null);
   
   const [formData, setFormData] = useState({
     tender_no: '', name_of_client: '', tender_status: 'Pending', 
@@ -50,11 +55,31 @@ const MasterDashboard = () => {
     fetchTenders().finally(() => setLoading(false));
   }, []);
 
+  // UPDATED: Intercept 'Tender Lost' to open the modal instead of instant save
   const handleStatusChange = async (tender_no, newStatus) => {
+    if (newStatus === 'Tender Lost') {
+      setSelectedTenderForPostBid(tender_no);
+      setIsPostBidModalOpen(true);
+      return; // Stop here, wait for modal submission
+    }
+
     try {
       await axios.patch(`${API_BASE_URL}/tenders/${encodeURIComponent(tender_no)}/status`, { tender_status: newStatus });
       fetchTenders(); 
     } catch (err) { alert("Error Updating: " + (err.response?.data?.error || err.message)); }
+  };
+
+  // NEW: Handles the save action from the PostBidForm modal
+  const handlePostBidSuccess = async (postBidPayload) => {
+    try {
+      await axios.put(`${API_BASE_URL}/log-loss/${encodeURIComponent(selectedTenderForPostBid)}`, postBidPayload);
+      setIsPostBidModalOpen(false);
+      setSelectedTenderForPostBid(null);
+      fetchTenders(); // Refresh table
+    } catch (err) {
+      console.error("Error logging leaderboard data:", err);
+     alert("Failed to save leaderboard data: " + JSON.stringify(err.response?.data?.detail || err.message));
+    }
   };
 
   const openAddModal = () => {
@@ -335,6 +360,14 @@ const MasterDashboard = () => {
           </div>
         </div>
       )}
+
+      {/* NEW: Post-Bid Leaderboard Modal Integration */}
+      <PostBidForm 
+        tenderId={selectedTenderForPostBid}
+        isOpen={isPostBidModalOpen}
+        onClose={() => { setIsPostBidModalOpen(false); setSelectedTenderForPostBid(null); }}
+        onSubmitSuccess={handlePostBidSuccess}
+      />
     </div>
   );
 };

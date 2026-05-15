@@ -4,14 +4,15 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr
 from datetime import datetime, date
 from passlib.context import CryptContext
+from psycopg2.extras import RealDictCursor
+from typing import Optional, List
+
 
 import csv
 import io
 import os
 import uuid
 import psycopg2
-from psycopg2.extras import RealDictCursor
-from typing import Optional, List
 
 # ----------------- IMPORTS -----------------
 from ai_service import (
@@ -110,6 +111,24 @@ class SessionRename(BaseModel):
 
 class StatusUpdate(BaseModel):
     tender_status: str
+
+
+class StatusUpdate(BaseModel):
+    tender_status: str
+
+# ---> PASTE THESE NEW MODELS HERE <---
+class CompetitorEntry(BaseModel):
+    rank: str
+    company: str
+    amount: Optional[float] = 0.00
+    percent_diff: Optional[float] = 0.00
+
+class FullPostBidPayload(BaseModel):
+    aarvi_rank: str
+    reason_for_loss: str
+    post_bid_remarks: Optional[str] = "No Remarks"
+    competitors: List[CompetitorEntry]
+
 
 # Setup Password Hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -416,7 +435,7 @@ def delete_session(session_id: str):
     finally:
         if conn: conn.close()
 
-# ----------------- KPI -----------------
+
 # ----------------- KPI -----------------
 @app.get("/kpi-stats")
 def get_kpi_stats(year: str = "All", manager: str = None): # ✅ ADDED MANAGER PARAMETER
@@ -667,6 +686,54 @@ def quick_update_status(tender_no: str, update: StatusUpdate):
 
     finally:
         if conn: conn.close()
+
+
+
+
+# ----------------- LOG TENDER LOSS (L1-L5) -----------------
+@app.put("/log-loss/{tender_no:path}")
+def log_full_leaderboard_loss(tender_no: str, payload: FullPostBidPayload):
+    import json
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        
+        # Convert the Python list of competitors into a JSON string for Postgres JSONB
+        competitors_json_string = json.dumps([c.dict() for c in payload.competitors])
+        
+        cur.execute(
+            """
+            UPDATE tenders 
+            SET tender_status = 'Tender Lost',
+                aarvi_rank = %s,
+                reason_for_loss = %s,
+                post_bid_remarks = %s,
+                competitor_list = %s::jsonb
+            WHERE tender_no = %s
+            """,
+            (
+                payload.aarvi_rank,
+                payload.reason_for_loss,
+                payload.post_bid_remarks,
+                competitors_json_string,
+                tender_no
+            )
+        )
+        conn.commit()
+
+        if cur.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Tender not found")
+
+        return {"status": "success", "message": "Leaderboard logged successfully"}
+
+    except Exception as e:
+        print(f"❌ Error logging loss: {e}")
+        return {"error": str(e)}
+
+    finally:
+        if conn: conn.close()
+
+
 
 # ----------------- DELETE TENDER -----------------
 @app.delete("/tenders/{tender_no:path}")
