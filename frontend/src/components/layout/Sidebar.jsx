@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { 
   LayoutGrid, FileText, BarChart2, X, Plus, 
-  MessageSquare, Edit3, Share2, Trash2, Search, LogOut // Added LogOut icon
+  MessageSquare, Edit3, Share2, Trash2, Search, LogOut
 } from 'lucide-react';
 
 // --- Sub-component for individual chat items ---
@@ -89,51 +89,53 @@ const ChatItem = ({ chat, currentSessionId, onSelect, onRename, onDelete }) => {
     </div>
   );
 };
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || "https://aarvi-tender-api.onrender.com";
+
 // --- Main Sidebar Component ---
 const Sidebar = ({ isOpen, onClose, activeTab, setActiveTab, currentSessionId, onSessionSelect }) => {
   const [sessions, setSessions] = useState([]);
   const [searchQuery, setSearchQuery] = useState(''); 
   
-  // --- NEW: Get User Role ---
   const userRole = localStorage.getItem('userRole');
 
-  // --- NEW: Logout Handler ---
   const handleLogout = () => {
     localStorage.removeItem('userRole');
     localStorage.removeItem('userEmail');
-    window.location.href = "/"; // Instantly redirects and drops them back to the Secure Gate
+    window.location.href = "/"; 
   };
 
   const fetchSessions = async () => {
-  try {
-    // 1. Grab the email you saved during login
-    const userEmail = localStorage.getItem('userEmail');
+    try {
+      const userEmail = localStorage.getItem('userEmail');
+      if (!userEmail) return;
 
-    // 2. If no email, don't even try (prevents the 422 error)
-    if (!userEmail) {
-      console.warn("No user email found in storage");
-      return;
+      const res = await axios.get(`${API_BASE_URL}/chats/sessions`, {
+        params: { email: userEmail } 
+      });
+
+      // FIX 1: Reverse the array so the newest chats (bottom of DB) show at the top of the UI
+      const newestFirst = [...res.data].reverse();
+      setSessions(newestFirst);
+    } catch (err) {
+      console.error("Error fetching sessions:", err);
     }
-
-    // 3. Send the request with the 'email' parameter
-    const res = await axios.get(`${API_BASE_URL}/chats/sessions`, {
-      params: { email: userEmail } // This MUST match the backend variable name
-    });
-
-    setSessions(res.data);
-  } catch (err) {
-    console.error("Error fetching sessions:", err);
-  }
-};
+  };
 
   useEffect(() => {
     const delayDebounceFn = setTimeout(() => {
-      fetchSessions(searchQuery);
+      fetchSessions();
     }, 300);
 
     return () => clearTimeout(delayDebounceFn);
   }, [currentSessionId, searchQuery]);
+
+  // FIX 2: Global Event Listener to catch when the AI finishes naming the chat
+  useEffect(() => {
+    const handleTitleUpdate = () => fetchSessions();
+    window.addEventListener('refresh-sidebar', handleTitleUpdate);
+    return () => window.removeEventListener('refresh-sidebar', handleTitleUpdate);
+  }, []);
 
   const handleRename = async (sessionId, newTitle) => {
     try {
@@ -191,7 +193,6 @@ const Sidebar = ({ isOpen, onClose, activeTab, setActiveTab, currentSessionId, o
               <Plus size={18} /> New Analysis
             </button>
 
-            {/* --- NEW: PROTECTED ROUTES (Admin Only) --- */}
             {(userRole === 'admin' || userRole === 'project_manager') && (
               <>
                 <button 
@@ -264,7 +265,6 @@ const Sidebar = ({ isOpen, onClose, activeTab, setActiveTab, currentSessionId, o
           </div>
         </div>
 
-        {/* --- NEW: LOGOUT SECTION --- */}
         <div className="p-4 border-t border-slate-800 shrink-0">
           <button 
             onClick={handleLogout}

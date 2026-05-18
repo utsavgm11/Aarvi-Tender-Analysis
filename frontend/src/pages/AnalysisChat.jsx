@@ -144,6 +144,7 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
         setMessages(prev => [...prev, { type: 'ai', result: tenderData }]);
         await persistMessage(sid, 'ai', tenderData);
       }
+      window.dispatchEvent(new Event('refresh-sidebar'));
     } catch (e) {
       const errorText = `Analysis failed: ${e.response?.data?.detail || e.message}`;
       setMessages(prev => [...prev, { type: 'ai', text: errorText }]);
