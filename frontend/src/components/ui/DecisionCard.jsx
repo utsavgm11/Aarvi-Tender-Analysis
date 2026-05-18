@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   ShieldCheck, AlertTriangle, TrendingUp, DollarSign,
   Briefcase, FileText, Target, CheckCircle2, XCircle,
@@ -18,10 +18,6 @@ const cleanText = (val) => {
 const DecisionCard = ({ result, progress }) => {
   const data = result?.aarvi_intelligence || result || {};
   const [isDownloading, setIsDownloading] = useState(false);
-  
-  // To trigger the gauge animation safely on mount
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
   
   const d = {
     tender_no: cleanText(data.tender_no),
@@ -128,13 +124,13 @@ const DecisionCard = ({ result, progress }) => {
         </div>
       </div>
 
-      {/* --- KPI STRIP GRID WITH ANIMATED GAUGE --- */}
+      {/* --- KPI STRIP GRID --- */}
       <div className="flex flex-col gap-5">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
           <KpiCard title="PQ Status" val={d.pq_status} icon={<ShieldCheck size={18}/>} color={d.pq_status === 'Pass' ? 'emerald' : d.pq_status === 'Pending Review' ? 'amber' : 'rose'} />
           
-          {/* UPDATED: NATIVE ANIMATED GAUGE WITH HOVER TOOLTIP */}
-          <GaugeKpiCard title="Win Probability" val={d.win_probability} tooltip={d.win_loss_kpi} mounted={mounted} />
+          {/* SIMPLIFIED WIN PROBABILITY CARD */}
+          <KpiCard title="Win Probability" val={d.win_probability} icon={<Target size={18}/>} color="blue" />
           
           <KpiCard title="Profit Score" val={d.profit_forecast} icon={<TrendingUp size={18}/>} color={profitColor} />
         </div>
@@ -168,7 +164,7 @@ const DecisionCard = ({ result, progress }) => {
         <DetailCard title="Penalty & Risk Clauses" icon={<AlertTriangle size={16}/>} content={d.penalty_terms} isRisk />
       </div>
 
-      {/* --- UPDATED: PROFESSIONAL CORPORATE HISTORICAL COMPETITOR SECTION --- */}
+      {/* --- PROFESSIONAL CORPORATE HISTORICAL COMPETITOR SECTION --- */}
       {hasCompetitors && (
         <div className="bg-white p-8 rounded-2xl border border-slate-200 border-l-[6px] border-l-slate-800 shadow-sm relative overflow-hidden">
           <div className="absolute top-0 right-0 p-4 opacity-[0.03]">
@@ -204,53 +200,6 @@ const DecisionCard = ({ result, progress }) => {
 };
 
 // --- SUB-COMPONENTS ---
-
-// 1. UPDATED: Gauge Chart Component with Hover Tooltip
-const GaugeKpiCard = ({ title, val, tooltip, mounted }) => {
-  const match = String(val).match(/\d+/);
-  const score = match ? parseInt(match[0], 10) : 0;
-  
-  // Math for the SVG Half-Circle (Radius 35)
-  const radius = 35;
-  const circumference = Math.PI * radius; // Approx 110
-  const strokeDashoffset = mounted ? circumference - (score / 100) * circumference : circumference;
-  
-  const strokeColor = score >= 75 ? '#10b981' : score >= 45 ? '#f59e0b' : '#f43f5e'; // Emerald, Amber, Rose
-
-  return (
-    <div 
-      className="bg-white p-5 rounded-xl border border-slate-100 flex items-center justify-between gap-2 hover:shadow-md transition-all relative overflow-hidden group cursor-help"
-      title={tooltip && tooltip !== "Not Specified" ? `Historical Data:\n${tooltip}` : "No historical data to calculate probability."}
-    >
-      <div className="flex-1 min-w-0 z-10">
-        <p className="text-[10px] uppercase font-bold text-slate-400 mb-1">{title}</p>
-        <p className="font-bold text-slate-800 text-sm truncate">{val}</p>
-      </div>
-      
-      {/* Animated SVG Speedometer */}
-      <div className="relative w-20 shrink-0 flex items-center justify-center pt-2">
-        <svg viewBox="0 0 100 55" className="w-full overflow-visible drop-shadow-sm">
-          {/* Background Track */}
-          <path d="M 15 50 A 35 35 0 0 1 85 50" fill="none" stroke="#f1f5f9" strokeWidth="12" strokeLinecap="round" />
-          {/* Animated Fill Track */}
-          <path 
-            d="M 15 50 A 35 35 0 0 1 85 50" 
-            fill="none" 
-            stroke={strokeColor} 
-            strokeWidth="12" 
-            strokeLinecap="round" 
-            strokeDasharray={circumference} 
-            strokeDashoffset={strokeDashoffset} 
-            style={{ transition: 'stroke-dashoffset 1.5s cubic-bezier(0.4, 0, 0.2, 1)' }} 
-          />
-        </svg>
-        <span className="absolute bottom-[-4px] text-[12px] font-black" style={{ color: strokeColor }}>
-          {score}%
-        </span>
-      </div>
-    </div>
-  );
-};
 
 const KpiCard = ({ title, val, icon, color }) => {
   const map = { 
