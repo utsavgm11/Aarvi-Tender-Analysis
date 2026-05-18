@@ -256,19 +256,22 @@ def generate_tender_summary(tender_text: str = None):
     kb_data = get_knowledge_base()
 
     prompt = f"""
-    ROLE: Expert Tender Data Extractor.
-    KNOWLEDGE BASE (Past Projects): {kb_data}
+    ROLE: Expert Tender Data Extractor and Senior Strategic Bid Consultant.
+    PACING DIRECTION: Treat this analysis as a high-value corporate audit. Take all the time needed to thoroughly evaluate details. Do not skim or skip lines. Depth, granularity, and strategic sharpness are mandatory.
+    
+    KNOWLEDGE BASE (Past Projects & Competitor Records): {kb_data}
 
     TASK: Scan the TENDER TEXT and map findings to the JSON schema below.
     
-    CRITICAL INSTRUCTIONS:
+    CRITICAL INSTRUCTIONS (DO NOT OMIT ANY STEP):
     1. Use '•' (bullet points) and newlines for: financial_qualification, technical_qualification, mandatory_compliance, and scope_of_work.
     2. description: Provide a 3-bullet point summary of the overall project.
     3. financial_qualification: COMBINE all explicit "Turnover", "Net Worth", "Security Deposit", and "PBG" conditions. Use bullets for each requirement.
     4. technical_qualification: COMBINE all "Similar Work" and "Experience" requirements into a bulleted list.
     5. If exact keywords are not found, identify equivalent financial or value-related statements and extract them. Do NOT return empty if partial financial information exists.
     6. manpower_count: If a direct grand total is not explicitly stated, extract the detailed breakdown of individual roles and their required quantities (e.g., '• Level 1 Engineer: 5 \\n• Safety Officer: 2'). Do NOT return 'Not Specified' if partial role breakdowns exist.
-    
+    7. COMPETITIVE HISTORICAL AUDIT: Cross-examine the current TENDER TEXT against the past project records and competitor tendencies in the KNOWLEDGE BASE. Identify structural traps, eligibility friction points, and competitor pricing baselines.
+    8. NO TRUNCATION RULE: Do not truncate summaries or compress critical technical clauses to close the JSON schema quickly. Build complete, exhaustive data arrays for all fields.
     JSON SCHEMA (Output ONLY valid JSON):
     {{
       "tender_no": "Find the Tender/RFQ number",
