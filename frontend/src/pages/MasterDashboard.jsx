@@ -2,19 +2,22 @@ import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { 
   Target, Clock, CheckCircle, XCircle, FileText, 
-  Search, Plus, Edit3, X, Trash2
+  Search, Plus, Edit3, X, Trash2, LayoutGrid, BarChart3, Save
 } from 'lucide-react';
-import PostBidForm from '../components/ui/PostBidForm'; // NEW: Imported the PostBidForm
+import PostBidForm from '../components/ui/PostBidForm'; 
 
 const MasterDashboard = () => {
   const [tenders, setTenders] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedFY, setSelectedFY] = useState('All'); // NEW: Financial Year State
+  const [selectedFY, setSelectedFY] = useState('All'); 
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState('add');
   
-  // NEW: Post-Bid Intelligence States
+  // 🗂️ NEW: Active Tab State for the Edit Form Modal Panel
+  const [activeFormTab, setActiveFormTab] = useState('core'); // 'core' or 'loss_intel'
+
+  // Post-Bid Intelligence States
   const [isPostBidModalOpen, setIsPostBidModalOpen] = useState(false);
   const [selectedTenderForPostBid, setSelectedTenderForPostBid] = useState(null);
   
@@ -25,28 +28,24 @@ const MasterDashboard = () => {
     project_manager: '', emd: '', emd_status: 'Pending', 
     tender_fee_status: 'Pending', price_status: 'Pending', source: '', 
     comments: '', docs_prepared_by: '', financial_year: '2023-2024', pre_bidding_date: '',
+    // 📊 Added matching post-bid schema keys directly into the main state data tree
+    aarvi_rank: '', reason_for_loss: '', post_bid_remarks: '',
+    competitors: [{ rank: 'L1', company: '', amount: '', percent_diff: '' }]
   });
 
-  // UPDATED: Now safely falls back to your Live Cloud URL
   const API_BASE_URL = import.meta.env.VITE_API_URL || "https://aarvi-tender-api.onrender.com";
 
- // ✅ CRITICAL UPDATE: Bypasses the Silo if the user is an Admin
   const fetchTenders = async () => {
     try {
       const managerName = localStorage.getItem('managerName');
-      const userRole = localStorage.getItem('userRole'); // Grab the role!
-      
+      const userRole = localStorage.getItem('userRole'); 
       const queryParams = {};
       
-      // ONLY apply the manager filter if the user is a project_manager
       if (userRole !== 'admin' && managerName && managerName !== 'undefined' && managerName !== 'null') {
         queryParams.manager = managerName;
       }
 
-      const res = await axios.get(`${API_BASE_URL}/tenders`, {
-        params: queryParams
-      });
-      
+      const res = await axios.get(`${API_BASE_URL}/tenders`, { params: queryParams });
       setTenders(res.data);
     } catch (err) { console.error("Fetch Error:", err); }
   };
@@ -55,12 +54,11 @@ const MasterDashboard = () => {
     fetchTenders().finally(() => setLoading(false));
   }, []);
 
-  // UPDATED: Intercept 'Tender Lost' to open the modal instead of instant save
   const handleStatusChange = async (tender_no, newStatus) => {
     if (newStatus === 'Tender Lost') {
       setSelectedTenderForPostBid(tender_no);
       setIsPostBidModalOpen(true);
-      return; // Stop here, wait for modal submission
+      return; 
     }
 
     try {
@@ -69,52 +67,116 @@ const MasterDashboard = () => {
     } catch (err) { alert("Error Updating: " + (err.response?.data?.error || err.message)); }
   };
 
-  // NEW: Handles the save action from the PostBidForm modal
   const handlePostBidSuccess = async (postBidPayload) => {
     try {
       await axios.put(`${API_BASE_URL}/log-loss/${encodeURIComponent(selectedTenderForPostBid)}`, postBidPayload);
       setIsPostBidModalOpen(false);
       setSelectedTenderForPostBid(null);
-      fetchTenders(); // Refresh table
+      fetchTenders(); 
     } catch (err) {
       console.error("Error logging leaderboard data:", err);
-     alert("Failed to save leaderboard data: " + JSON.stringify(err.response?.data?.detail || err.message));
+      alert("Failed to save leaderboard data: " + JSON.stringify(err.response?.data?.detail || err.message));
     }
   };
 
   const openAddModal = () => {
     setModalMode('add');
+    setActiveFormTab('core'); // Reset tab view
     setFormData({ 
       tender_no: '', name_of_client: '', tender_status: 'Pending', 
       received_date: '', due_date: '', location: '', 
       tender_open_price: '', quoted_value: '', description: '', 
       project_manager: '', emd: '', emd_status: 'Pending', 
       tender_fee_status: 'Pending', price_status: 'Pending', source: '', 
-      comments: '', docs_prepared_by: '', financial_year: '2023-2024',
-      pre_bidding_date: ''
+      comments: '', docs_prepared_by: '', financial_year: '2023-2024', pre_bidding_date: '',
+      aarvi_rank: '', reason_for_loss: '', post_bid_remarks: '',
+      competitors: [{ rank: 'L1', company: '', amount: '', percent_diff: '' }]
     });
     setIsModalOpen(true);
   };
 
   const openEditModal = (tender) => {
     setModalMode('edit');
+    setActiveFormTab('core'); // Always open on Core details tab first
     setFormData({
       ...tender,
       received_date: tender.received_date ? tender.received_date.split(' ')[0] : '',
       due_date: tender.due_date ? tender.due_date.split(' ')[0] : '', 
       pre_bidding_date: tender.pre_bidding_date ? tender.pre_bidding_date.split(' ')[0] : '',
+      // Map existing layout fields or fallback safely to blanks
+      aarvi_rank: tender.aarvi_rank || '',
+      reason_for_loss: tender.reason_for_loss || '',
+      post_bid_remarks: tender.post_bid_remarks || '',
+      competitors: tender.competitors && tender.competitors.length > 0 
+        ? tender.competitors 
+        : [{ rank: 'L1', company: '', amount: '', percent_diff: '' }]
     });
     setIsModalOpen(true);
+  };
+
+  // Automated Aarvi Tracking sync inside the inline array form
+  useEffect(() => {
+    if (formData.aarvi_rank && formData.aarvi_rank !== 'Disqualified' && formData.aarvi_rank !== 'L5+') {
+      const exists = formData.competitors.some(c => c.rank === formData.aarvi_rank);
+      if (!exists) {
+        const filtered = formData.competitors.filter(c => c.company?.toLowerCase() !== 'aarvi encon');
+        setFormData(prev => ({
+          ...prev,
+          competitors: [
+            ...filtered,
+            { rank: formData.aarvi_rank, company: 'Aarvi Encon', amount: '', percent_diff: '' }
+          ].sort((a, b) => a.rank.localeCompare(b.rank))
+        }));
+      }
+    }
+  }, [formData.aarvi_rank]);
+
+  const handleCompetitorChange = (index, field, value) => {
+    const updated = [...formData.competitors];
+    updated[index][field] = value;
+    setFormData({ ...formData, competitors: updated });
+  };
+
+  const addCompetitorRow = () => {
+    if (formData.competitors.length >= 5) {
+      alert("You can record up to L5 leaderboard data matrix.");
+      return;
+    }
+    const nextRank = `L${formData.competitors.length + 1}`;
+    setFormData({
+      ...formData,
+      competitors: [...formData.competitors, { rank: nextRank, company: '', amount: '', percent_diff: '' }]
+    });
+  };
+
+  const removeCompetitorRow = (index) => {
+    if (formData.competitors[index].company === 'Aarvi Encon') {
+      alert("To alter Aarvi Encon positioning, please adjust the status rank selector directly.");
+      return;
+    }
+    setFormData({
+      ...formData,
+      competitors: formData.competitors.filter((_, i) => i !== index)
+    });
   };
 
   const handleSaveTender = async (e) => {
     e.preventDefault();
     
+    // Clean up numerical string arrays cleanly before shipping payload
+    const formattedCompetitors = formData.competitors.map(c => ({
+      rank: c.rank,
+      company: c.company || "Unknown Competitor",
+      amount: c.amount ? parseFloat(c.amount) : 0.00,
+      percent_diff: c.percent_diff ? parseFloat(c.percent_diff) : 0.00
+    }));
+
     const cleanedData = {
       ...formData,
       tender_open_price: formData.tender_open_price === '' ? null : parseFloat(formData.tender_open_price),
       quoted_value: formData.quoted_value === '' ? null : parseFloat(formData.quoted_value),
-      pre_bidding_date: formData.pre_bidding_date === '' ? null : formData.pre_bidding_date
+      pre_bidding_date: formData.pre_bidding_date === '' ? null : formData.pre_bidding_date,
+      competitors: formattedCompetitors
     };
 
     try {
@@ -140,15 +202,10 @@ const MasterDashboard = () => {
         await axios.delete(`${API_BASE_URL}/tenders/${encodeURIComponent(tenderNo)}`);
         setIsModalOpen(false); 
         await fetchTenders(); 
-      } catch (err) {
-        alert("Delete failed: " + err.message);
-      } finally {
-        setLoading(false);
-      }
+      } catch (err) { alert("Delete failed: " + err.message); } finally { setLoading(false); }
     }
   };
 
-  // UPDATED: Dynamic Export based on selected FY
   const handleDownload = () => {
     const url = selectedFY === 'All' 
       ? `${API_BASE_URL}/export-tenders` 
@@ -162,7 +219,6 @@ const MasterDashboard = () => {
     return d;
   }, []);
 
-  // NEW: Dynamically grab all available Financial Years from the data
   const availableFYs = useMemo(() => {
     const years = [...new Set(tenders.map(t => t.financial_year))].filter(Boolean);
     return ['All', ...years.sort().reverse()];
@@ -177,9 +233,7 @@ const MasterDashboard = () => {
     return ''; 
   };
 
-  // UPDATED: Comprehensive Sorting & Filtering Logic
   const sortedTenders = useMemo(() => {
-    // 1. Filter by Search term AND Financial Year
     const filtered = tenders.filter(t => {
       const matchesSearch = t.name_of_client?.toLowerCase().includes(searchTerm.toLowerCase()) || 
                             t.tender_no?.toLowerCase().includes(searchTerm.toLowerCase());
@@ -187,44 +241,29 @@ const MasterDashboard = () => {
       return matchesSearch && matchesFY;
     });
 
-    // 2. Sort: Active up top (ascending), Expired at bottom (descending)
     return filtered.sort((a, b) => {
       const dateA = a.due_date ? new Date(a.due_date) : new Date('9999-12-31');
       const dateB = b.due_date ? new Date(b.due_date) : new Date('9999-12-31');
-      
       const isAActive = dateA >= today;
       const isBActive = dateB >= today;
-
       if (isAActive && !isBActive) return -1;
       if (!isAActive && isBActive) return 1;
-
-      // Both active: closest deadline first
       if (isAActive && isBActive) return dateA - dateB;
-
-      // Both expired: most recent first
       return dateB - dateA;
     });
   }, [tenders, searchTerm, selectedFY, today]);
 
   const stats = useMemo(() => ({
-  // 1. Total Active (Kept as original logic: Live tenders with future deadlines)
-  totalActive: tenders.filter(t => 
-    t.due_date && 
-    new Date(t.due_date) >= today && 
-    !['Tender Won', 'Tender Lost', 'Tender Cancelled', 'Tender Regret'].includes(t.tender_status)
-  ).length,
-
-  // 2. Tender Quoted (UPDATED: Now includes Won + Lost + Quoted + Cancelled)
-  quoted: tenders.filter(t => 
-    ['Tender Won', 'Tender Lost', 'Tender Quoted', 'Quoted', 'Quoted Active', 'Tender Cancelled'].includes(t.tender_status)
-  ).length,
-
-  // 3. Tenders Won
-  won: tenders.filter(t => t.tender_status === 'Tender Won').length,
-
-  // 4. Tenders Lost
-  lost: tenders.filter(t => t.tender_status === 'Tender Lost').length,
-}), [tenders, today]);
+    totalActive: tenders.filter(t => 
+      t.due_date && new Date(t.due_date) >= today && 
+      !['Tender Won', 'Tender Lost', 'Tender Cancelled', 'Tender Regret'].includes(t.tender_status)
+    ).length,
+    quoted: tenders.filter(t => 
+      ['Tender Won', 'Tender Lost', 'Tender Quoted', 'Quoted', 'Quoted Active', 'Tender Cancelled'].includes(t.tender_status)
+    ).length,
+    won: tenders.filter(t => t.tender_status === 'Tender Won').length,
+    lost: tenders.filter(t => t.tender_status === 'Tender Lost').length,
+  }), [tenders, today]);
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -242,7 +281,6 @@ const MasterDashboard = () => {
       </div>
 
       <div className="flex justify-between items-center mb-6">
-        {/* UPDATED: Added Financial Year Dropdown next to Search */}
         <div className="flex gap-4 items-center">
           <div className="relative w-96">
             <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
@@ -308,36 +346,200 @@ const MasterDashboard = () => {
         </table>
       </div>
 
+      {/* 👑 MASTER FORM CONTAINER PANEL */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white p-8 rounded-[2rem] w-full max-w-5xl max-h-[90vh] overflow-y-auto shadow-2xl relative custom-scrollbar">
             <button onClick={() => setIsModalOpen(false)} className="absolute top-6 right-6 text-slate-400 hover:text-slate-800 transition-colors"><X size={24} /></button>
-            <h2 className="text-2xl font-black mb-6 text-slate-800">{modalMode === 'add' ? 'Add New Tender' : 'Edit Tender Details'}</h2>
+            
+            <h2 className="text-2xl font-black text-slate-800 mb-2">
+              {modalMode === 'add' ? 'Add New Tender' : 'Edit Tender Details'}
+            </h2>
+
+            {/* 📑 DYNAMIC TAB SWITCHER HEADER HEADER */}
+            {formData.tender_status === 'Tender Lost' && (
+              <div className="flex border-b border-slate-100 mb-6 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveFormTab('core')}
+                  className={`flex items-center gap-2 px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 ${activeFormTab === 'core' ? 'border-b-indigo-600 text-indigo-600 bg-indigo-50/40 rounded-t-xl' : 'border-b-transparent text-slate-400 hover:text-slate-600'}`}
+                >
+                  <LayoutGrid size={16} /> Core Technical Details
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveFormTab('loss_intel')}
+                  className={`flex items-center gap-2 px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 ${activeFormTab === 'loss_intel' ? 'border-b-rose-600 text-rose-600 bg-rose-50/40 rounded-t-xl' : 'border-b-transparent text-slate-400 hover:text-slate-600'}`}
+                >
+                  <BarChart3 size={16} /> L1 - L5 Loss Intelligence
+                </button>
+              </div>
+            )}
+
             <form onSubmit={handleSaveTender} className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <InputField label="Tender No *" name="tender_no" value={formData.tender_no} onChange={handleChange} required disabled={modalMode === 'edit'} />
-                <InputField label="Name of Client *" name="name_of_client" value={formData.name_of_client} onChange={handleChange} required />
-                <SelectField label="Tender Status" name="tender_status" value={formData.tender_status} onChange={handleChange} options={['Pending', 'Tender Quoted', 'Tender Won', 'Tender Lost', 'Tender Regret', 'Tender Cancelled']} />
-                <InputField label="Received Date" name="received_date" type="date" value={formData.received_date} onChange={handleChange} />
-                <InputField label="Due Date" name="due_date" type="date" value={formData.due_date} onChange={handleChange} />
-                <InputField label="Pre-Bidding Date" name="pre_bidding_date" type="date" value={formData.pre_bidding_date} onChange={handleChange} />
-                <InputField label="Location" name="location" value={formData.location} onChange={handleChange} />
-                <InputField label="Tender Open Price" name="tender_open_price" value={formData.tender_open_price} onChange={handleChange} />
-                <InputField label="Quoted Value" name="quoted_value" value={formData.quoted_value} onChange={handleChange} />
-                <SelectField label="Price Status" name="price_status" value={formData.price_status} onChange={handleChange} options={['Pending', 'Submitted', 'Not Applicable']} />
-                <InputField label="Project Manager" name="project_manager" value={formData.project_manager} onChange={handleChange} />
-                <InputField label="Docs Prepared By" name="docs_prepared_by" value={formData.docs_prepared_by} onChange={handleChange} />
-                <InputField label="Financial Year" name="financial_year" value={formData.financial_year} onChange={handleChange} />
-                <InputField label="EMD Value" name="emd" value={formData.emd} onChange={handleChange} />
-                <SelectField label="EMD Status" name="emd_status" value={formData.emd_status} onChange={handleChange} options={['Pending', 'Submitted', 'Exempted', 'Returned']} />
-                <SelectField label="Tender Fee Status" name="tender_fee_status" value={formData.tender_fee_status} onChange={handleChange} options={['Pending', 'Paid', 'Exempted']} />
-                <InputField label="Source (Portal/Email)" name="source" value={formData.source} onChange={handleChange} />
-              </div>
-              <div className="grid grid-cols-1 gap-6">
-                <div><label className="block text-[11px] uppercase font-bold text-slate-500 mb-2">Description</label><textarea name="description" value={formData.description} onChange={handleChange} rows="2" className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"></textarea></div>
-                <div><label className="block text-[11px] uppercase font-bold text-slate-500 mb-2">Comments</label><textarea name="comments" value={formData.comments} onChange={handleChange} rows="2" className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"></textarea></div>
-              </div>
               
+              {/* PAGE TAB 1: CORE DATA FORM PANEL */}
+              {activeFormTab === 'core' && (
+                <div className="space-y-6 transition-all duration-200">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <InputField label="Tender No *" name="tender_no" value={formData.tender_no} onChange={handleChange} required disabled={modalMode === 'edit'} />
+                    <InputField label="Name of Client *" name="name_of_client" value={formData.name_of_client} onChange={handleChange} required />
+                    <SelectField label="Tender Status" name="tender_status" value={formData.tender_status} onChange={handleChange} options={['Pending', 'Tender Quoted', 'Tender Won', 'Tender Lost', 'Tender Regret', 'Tender Cancelled']} />
+                    <InputField label="Received Date" name="received_date" type="date" value={formData.received_date} onChange={handleChange} />
+                    <InputField label="Due Date" name="due_date" type="date" value={formData.due_date} onChange={handleChange} />
+                    <InputField label="Pre-Bidding Date" name="pre_bidding_date" type="date" value={formData.pre_bidding_date} onChange={handleChange} />
+                    <InputField label="Location" name="location" value={formData.location} onChange={handleChange} />
+                    <InputField label="Tender Open Price" name="tender_open_price" value={formData.tender_open_price} onChange={handleChange} />
+                    <InputField label="Quoted Value" name="quoted_value" value={formData.quoted_value} onChange={handleChange} />
+                    <SelectField label="Price Status" name="price_status" value={formData.price_status} onChange={handleChange} options={['Pending', 'Submitted', 'Not Applicable']} />
+                    <InputField label="Project Manager" name="project_manager" value={formData.project_manager} onChange={handleChange} />
+                    <InputField label="Docs Prepared By" name="docs_prepared_by" value={formData.docs_prepared_by} onChange={handleChange} />
+                    <InputField label="Financial Year" name="financial_year" value={formData.financial_year} onChange={handleChange} />
+                    <InputField label="EMD Value" name="emd" value={formData.emd} onChange={handleChange} />
+                    <SelectField label="EMD Status" name="emd_status" value={formData.emd_status} onChange={handleChange} options={['Pending', 'Submitted', 'Exempted', 'Returned']} />
+                    <SelectField label="Tender Fee Status" name="tender_fee_status" value={formData.tender_fee_status} onChange={handleChange} options={['Pending', 'Paid', 'Exempted']} />
+                    <InputField label="Source (Portal/Email)" name="source" value={formData.source} onChange={handleChange} />
+                  </div>
+                  <div className="grid grid-cols-1 gap-6">
+                    <div><label className="block text-[11px] uppercase font-bold text-slate-500 mb-2">Description</label><textarea name="description" value={formData.description} onChange={handleChange} rows="2" className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"></textarea></div>
+                    <div><label className="block text-[11px] uppercase font-bold text-slate-500 mb-2">Comments</label><textarea name="comments" value={formData.comments} onChange={handleChange} rows="2" className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"></textarea></div>
+                  </div>
+                </div>
+              )}
+
+              {/* 📊 PAGE TAB 2: SLIDING LEADERBOARD DATA MATRIX VIEW */}
+              {activeFormTab === 'loss_intel' && formData.tender_status === 'Tender Lost' && (
+                <div className="space-y-6 transition-all duration-300 bg-slate-50/50 p-6 rounded-2xl border border-slate-100">
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Aarvi's Final Position</label>
+                      <select 
+                        name="aarvi_rank"
+                        value={formData.aarvi_rank} 
+                        onChange={handleChange}
+                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-sm font-semibold"
+                      >
+                        <option value="">Select Rank...</option>
+                        <option value="L2">L2 (Runner Up)</option>
+                        <option value="L3">L3</option>
+                        <option value="L4">L4</option>
+                        <option value="L5">L5</option>
+                        <option value="L5+">Lower than L5</option>
+                        <option value="Disqualified">Technically Disqualified</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Primary Reason for Loss</label>
+                      <select 
+                        name="reason_for_loss"
+                        value={formData.reason_for_loss} 
+                        onChange={handleChange}
+                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-sm font-semibold"
+                      >
+                        <option value="">Select Reason...</option>
+                        <option value="Price Too High">Price Too High (Commercial)</option>
+                        <option value="Technical Qualification">Lack of Technical Experience</option>
+                        <option value="Financial Criteria">Failed Financial Criteria</option>
+                        <option value="Client Preference">Client Preference/Relationship</option>
+                        <option value="Documentation Error">Documentation Error</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Leaderboard Array Form Fields */}
+                  <div>
+                    <div className="flex justify-between items-center mb-3">
+                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider">Bidding Leaderboard Matrix</label>
+                      <button
+                        type="button"
+                        onClick={addCompetitorRow}
+                        className="flex items-center gap-1 text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-2.5 py-1.5 rounded-lg transition-all"
+                      >
+                        <Plus size={14} /> Add Position Row
+                      </button>
+                    </div>
+
+                    <div className="space-y-2 pr-1">
+                      {formData.competitors.map((row, index) => (
+                        <div key={index} className="grid grid-cols-12 gap-2 items-center bg-white p-2 rounded-xl border border-slate-200/60">
+                          <div className="col-span-2">
+                            <select
+                              value={row.rank}
+                              onChange={(e) => handleCompetitorChange(index, 'rank', e.target.value)}
+                              className="w-full p-1.5 bg-slate-50 border rounded-lg text-xs font-bold text-center outline-none"
+                            >
+                              <option value="L1">L1</option>
+                              <option value="L2">L2</option>
+                              <option value="L3">L3</option>
+                              <option value="L4">L4</option>
+                              <option value="L5">L5</option>
+                            </select>
+                          </div>
+
+                          <div className="col-span-4">
+                            <input
+                              type="text"
+                              value={row.company}
+                              disabled={row.company === 'Aarvi Encon'}
+                              onChange={(e) => handleCompetitorChange(index, 'company', e.target.value)}
+                              placeholder={row.rank === 'L1' ? "Winning Bidder Name" : "Company Name"}
+                              required
+                              className="w-full p-1.5 pl-2 border rounded-lg text-xs outline-none disabled:bg-indigo-50 disabled:text-indigo-800 disabled:font-bold"
+                            />
+                          </div>
+
+                          <div className="col-span-3">
+                            <input
+                              type="number"
+                              value={row.amount}
+                              onChange={(e) => handleCompetitorChange(index, 'amount', e.target.value)}
+                              placeholder="Bid Value (₹)"
+                              className="w-full p-1.5 border rounded-lg text-xs outline-none font-mono"
+                            />
+                          </div>
+
+                          <div className="col-span-2">
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={row.percent_diff}
+                              disabled={row.rank === 'L1'}
+                              onChange={(e) => handleCompetitorChange(index, 'percent_diff', e.target.value)}
+                              placeholder="Gap %"
+                              className="w-full p-1.5 border rounded-lg text-xs outline-none font-mono disabled:bg-slate-100 disabled:text-slate-400"
+                            />
+                          </div>
+
+                          <div className="col-span-1 text-center">
+                            <button
+                              type="button"
+                              onClick={() => removeCompetitorRow(index)}
+                              className="text-slate-400 hover:text-rose-500 transition-colors p-1"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Strategy Notes / Management Remarks</label>
+                    <textarea
+                      name="post_bid_remarks"
+                      value={formData.post_bid_remarks}
+                      onChange={handleChange}
+                      rows="3"
+                      placeholder="Type any internal operational notes here..."
+                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-xs resize-none"
+                    ></textarea>
+                  </div>
+                </div>
+              )}
+
+              {/* Modal Control Actions Footer */}
               <div className="pt-4 flex justify-between items-center border-t">
                 {modalMode === 'edit' ? (
                   <button 
@@ -353,7 +555,9 @@ const MasterDashboard = () => {
 
                 <div className="flex gap-3">
                   <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-3 font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition-colors">Cancel</button>
-                  <button type="submit" disabled={loading} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-colors flex items-center gap-2">{loading ? 'Saving...' : 'Save Tender Record'}</button>
+                  <button type="submit" disabled={loading} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-colors flex items-center gap-2">
+                    <Save size={16}/> {loading ? 'Saving...' : 'Save Tender Record'}
+                  </button>
                 </div>
               </div>
             </form>
@@ -361,7 +565,6 @@ const MasterDashboard = () => {
         </div>
       )}
 
-      {/* NEW: Post-Bid Leaderboard Modal Integration */}
       <PostBidForm 
         tenderId={selectedTenderForPostBid}
         isOpen={isPostBidModalOpen}
