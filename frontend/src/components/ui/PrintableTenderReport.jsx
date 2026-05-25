@@ -195,7 +195,7 @@ const PrintableTenderReport = ({ d, bidDecision }) => {
               <div className="grid-value font-semibold">{renderFormalContent(d.win_loss_kpi)}</div>
             </div>
             <div className="grid-row">
-              <div className="grid-label" style={{ backgroundColor: '#f3f4f6' }}>Major Market Threats</div>
+              <div className="grid-label" style={{ backgroundColor: '#f3f4f6' }}>Client-Specific Competitor History</div>
               <div className="grid-value text-red-900">{renderFormalContent(d.historical_competitors)}</div>
             </div>
           </div>

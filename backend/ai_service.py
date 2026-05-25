@@ -100,11 +100,17 @@ def normalize_client_name(extracted_name):
         
     name = str(extracted_name).upper().strip()
     
-    # If the AI reads "Hindustan Petroleum", convert it to "HPCL"
-    # This ensures we catch HPCL Mittal, HPCL Rajasthan, etc., but IGNORE Hindustan Aeronautics!
+
+def normalize_client_name(extracted_name):
+    """Translates full company names into core acronyms to group joint ventures."""
+    if not extracted_name or extracted_name == "Not Specified":
+        return extracted_name
+        
+    name = str(extracted_name).upper().strip()
+    
+    # Existing rules
     if "HINDUSTAN PETROLEUM" in name:
         return "HPCL"
-        
     if "INDIAN OIL" in name:
         return "IOCL"
     if "OIL & NATURAL GAS" in name or "OIL AND NATURAL GAS" in name:
@@ -112,14 +118,19 @@ def normalize_client_name(extracted_name):
     if "BHARAT PETROLEUM" in name:
         return "BPCL"
         
+    # --- SIMPLIFIED DIRECT GAIL RULE ---
+    # If the text contains "GAIL" anywhere (or the old "GAS AUTHORITY"), it belongs to GAIL
+    if "GAIL" in name or "GAS AUTHORITY" in name:
+        return "GAIL"
+        
     return extracted_name.strip()
+
 
 def fetch_client_intelligence(client_name: str):
     """
-    Connects to Neon to extract Win/Loss ratios and Competitor Threats.
-    Returns a dictionary with formatted strings for the UI.
+    Connects to Neon to extract Win/Loss ratios, structured Competitor Threats,
+    AND unstructured qualitative comments for Lost bids.
     """
-    # 1. Translate long names (like Hindustan Petroleum) into the base acronym (HPCL)
     search_name = normalize_client_name(client_name)
     
     if not search_name or search_name == "Not Specified":
@@ -129,10 +140,9 @@ def fetch_client_intelligence(client_name: str):
         conn = psycopg2.connect(NEON_URL, cursor_factory=RealDictCursor)
         cur = conn.cursor()
         
-        # 2. Fetch all historical tenders for this client to calculate win/loss and threats
-        # Wildcard search ILIKE %HPCL% catches HPCL, HPCL Mittal, HPCL Rajasthan, etc.
+        # 1. Added 'comments' to the SQL SELECT statement
         cur.execute("""
-            SELECT tender_status, competitor_list 
+            SELECT tender_status, competitor_list, comments 
             FROM tenders 
             WHERE name_of_client ILIKE %s
         """, (f"%{search_name}%",))
@@ -144,70 +154,90 @@ def fetch_client_intelligence(client_name: str):
         if not records:
             return {"kpi": "No Past Record", "competitors": "No historical competitor data found for this client."}
             
-        # 1. Calculate Win/Loss KPIs
-        # 1. Calculate explicit statuses for the new Total Bids logic
+        # 2. Calculate Win/Loss KPIs
         won_bids = sum(1 for r in records if r['tender_status'] == 'Tender Won')
         lost_bids = sum(1 for r in records if r['tender_status'] == 'Tender Lost')
         quoted_bids = sum(1 for r in records if r['tender_status'] in ['Tender Quoted', 'Quoted'])
         cancelled_bids = sum(1 for r in records if r['tender_status'] in ['Cancelled', 'Tender Cancelled'])
         
-        # Calculate new explicit total
         total_bids = won_bids + lost_bids + quoted_bids + cancelled_bids
-        
         win_rate = round((won_bids / total_bids) * 100) if total_bids > 0 else 0
         loss_rate = 100 - win_rate
         
         kpi_text = f"[ ❌ {loss_rate}% | 🎉 {win_rate}% ]\nTotal Bids: {total_bids} (Won: {won_bids} | Lost: {lost_bids} | Quoted: {quoted_bids} | Cancelled: {cancelled_bids})"
-        # 2. Extract Top 3 Competitor Threats from the lost tenders
+        
+        # 3. Extract Top 3 Competitor Threats AND Qualitative Comments from lost tenders
         threats = {}
+        raw_comments = []
         lost_records_with_data = 0
         
         for row in records:
-            if row['tender_status'] == 'Tender Lost' and row['competitor_list']:
-                competitors = row['competitor_list']
-                if isinstance(competitors, str) and competitors != '[]':
+            if row['tender_status'] == 'Tender Lost':
+                has_extracted_something = False
+                
+                # --- A: Try to extract structured Competitor Data ---
+                competitors = row.get('competitor_list')
+                if competitors and isinstance(competitors, str) and competitors.strip() not in ['[]', '']:
                     try:
-                        competitors = json.loads(competitors)
-                    except:
-                        continue
-                
-                if isinstance(competitors, list) and len(competitors) > 0:
-                    lost_records_with_data += 1
-                    for comp in competitors:
-                        name = comp.get("company", "")
-                        rank = comp.get("rank", "")
-                        gap = comp.get("percent_diff") or 0.0
-                        
-                        if name and name.lower() not in ["aarvi encon", "aarvi encon ltd", "aarvi"]:
-                            if name not in threats:
-                                threats[name] = {"encounters": 0, "wins": 0, "gaps": []}
-                            
-                            threats[name]["encounters"] += 1
-                            if rank == "L1":
-                                threats[name]["wins"] += 1
-                            if gap > 0:
-                                threats[name]["gaps"].append(gap)
+                        comp_list = json.loads(competitors)
+                        if isinstance(comp_list, list) and len(comp_list) > 0:
+                            has_extracted_something = True
+                            for comp in comp_list:
+                                name = comp.get("company", "")
+                                rank = comp.get("rank", "")
+                                gap = comp.get("percent_diff") or 0.0
                                 
-        # Format the Competitor UI Text Block
-        if lost_records_with_data == 0 or not threats:
-            comp_text = f"We have {total_bids} bids on record, but no L1-L5 leaderboard history was mapped for these past losses."
+                                if name and name.lower() not in ["aarvi encon", "aarvi encon ltd", "aarvi"]:
+                                    if name not in threats:
+                                        threats[name] = {"encounters": 0, "wins": 0, "gaps": []}
+                                    
+                                    threats[name]["encounters"] += 1
+                                    if rank == "L1":
+                                        threats[name]["wins"] += 1
+                                    if gap > 0:
+                                        threats[name]["gaps"].append(gap)
+                    except json.JSONDecodeError:
+                        # If it's plain text instead of JSON, treat it as a comment!
+                        raw_comments.append(f"Competitor Note: {competitors.strip()}")
+                        has_extracted_something = True
+
+                # --- B: Extract unstructured qualitative comments ---
+                comments = row.get('comments')
+                if comments and str(comments).strip().lower() not in ['nan', 'none', '']:
+                    raw_comments.append(str(comments).strip())
+                    has_extracted_something = True
+
+                if has_extracted_something:
+                    lost_records_with_data += 1
+                    
+        # 4. Format the Competitor UI Text Block & Strategy Feed
+        if lost_records_with_data == 0:
+            comp_text = f"We have {total_bids} bids on record, but no competitor history or loss comments were found for these past losses."
         else:
-            comp_text = f"Our backend records indicate we have competed on {lost_records_with_data} logged losing tenders for this operator. The following persistent market threats have been discovered:\n\n"
+            comp_text = f"Our backend records indicate we have logged qualitative data on {lost_records_with_data} lost tenders for this operator.\n\n"
             
-            # Sort threats by L1 wins, then by encounters
-            sorted_threats = sorted(threats.items(), key=lambda x: (x[1]['wins'], x[1]['encounters']), reverse=True)
-            medals = ["🥇 1.", "🥈 2.", "🥉 3."]
-            
-            for i, (comp_name, data) in enumerate(sorted_threats[:3]):
-                avg_gap = round(sum(data["gaps"]) / len(data["gaps"]), 2) if data["gaps"] else 0.0
-                medal = medals[i] if i < 3 else f"• {i+1}."
+            # Add Structured Threats (if any exist)
+            if threats:
+                comp_text += "**Quantitative Competitor Threats:**\n"
+                sorted_threats = sorted(threats.items(), key=lambda x: (x[1]['wins'], x[1]['encounters']), reverse=True)
+                medals = ["🥇 1.", "🥈 2.", "🥉 3."]
                 
-                comp_text += f"• {medal} **{comp_name}**\n"
-                comp_text += f"  - Encountered: {data['encounters']} times | Has taken L1 Rank: {data['wins']} times\n"
-                if avg_gap > 0:
-                    comp_text += f"  - Average Margin Disadvantage: We typically lose to them by a gap of {avg_gap}%\n\n"
-                else:
-                    comp_text += "  - Average Margin Disadvantage: Baseline benchmark maker (0.00% variance)\n\n"
+                for i, (comp_name, data) in enumerate(sorted_threats[:3]):
+                    avg_gap = round(sum(data["gaps"]) / len(data["gaps"]), 2) if data["gaps"] else 0.0
+                    medal = medals[i] if i < 3 else f"• {i+1}."
+                    
+                    comp_text += f"{medal} **{comp_name}**\n"
+                    comp_text += f"  - Encountered: {data['encounters']} times | Has taken L1 Rank: {data['wins']} times\n"
+                    if avg_gap > 0:
+                        comp_text += f"  - Average Margin Disadvantage: We typically lose to them by a gap of {avg_gap}%\n\n"
+                    else:
+                        comp_text += "  - Average Margin Disadvantage: Baseline benchmark maker (0.00% variance)\n\n"
+
+            # Add Unstructured Comments (if any exist)
+            if raw_comments:
+                comp_text += "**Qualitative Loss Reasons & Background:**\n"
+                for comment in set(raw_comments): # set() removes duplicates
+                    comp_text += f"• {comment}\n"
                     
         return {"kpi": kpi_text, "competitors": comp_text.strip()}
         
@@ -316,32 +346,43 @@ def generate_tender_summary(tender_text: str = None):
         historical_intel = fetch_client_intelligence(extracted_client)
 
         # --- NEW: AI COMPETITIVE STRATEGY GENERATION (PASS 2) ---
-        # Only run this if we actually have competitor history to analyze
         if historical_intel.get("kpi") != "No Past Record" and "No historical competitor data" not in historical_intel.get("competitors", ""):
             strategy_prompt = f"""
-            ROLE: Chief Bidding Strategist for Aarvi Encon.
+            ROLE: Senior Bidding Strategist & Consultant for Aarvi Encon.
             CLIENT: {extracted_client}
-            PROJECT SCOPE: {ai_extracted_data.get('scope_of_work', 'Not specified')}
             
-            OUR HISTORICAL WIN/LOSS KPI WITH THIS CLIENT:
-            {historical_intel.get('kpi')}
-            
-            THE COMPETITOR THREATS WE LOST TO PREVIOUSLY:
+            RAW HISTORICAL LOSS DATA (Competitors & Pricing):
             {historical_intel.get('competitors')}
             
-            TASK: Based on the historical database intelligence above, write a highly analytical, 5-sentence strategic recommendation for our management team. 
-            Hypothesize *why* we lost to these specific competitors in the past (e.g., margin compression, local mobilization advantage, acting as the L1 baseline) and tell our team exactly what pricing or technical strategy we must adopt to beat them on this new bid. Be authoritative, actionable, and concise. Do not use conversational filler.
+            TASK: Analyze the raw competitor data above and return your response EXACTLY in this JSON format.
+            
+            {{
+                "top_3_competitors": "A clean, bulleted list of the Top 3 most dangerous recurring competitors. For EACH competitor, you MUST explicitly state: 1) How many times we encountered them, 2) How many times they took the L1 rank, and 3) The specific reason we lost (e.g., pricing gaps, service charges).",
+                "strategic_advice": "Act as a Senior Consultant. Look at ALL the competitors and pricing trends in the raw data. Write a highly analytical, 5-sentence strategic recommendation. Tell our management team exactly what pricing, margins, or technical strategy we must adopt to beat them on this new bid."
+            }}
             """
             try:
-                # Ask Gemini to write the tactical strategy
-                ai_strategy = model.generate_content(strategy_prompt).text.strip()
+                # Ask Gemini to parse the messy text, find the Top 3, AND write the strategy
+                ai_strategy_response = model.generate_content(strategy_prompt, generation_config={"response_mime_type": "application/json"}).text
                 
-                # Combine the basic compliance advice from logic.py with this new AI brain-power insight
+                try:
+                    strategy_json = json.loads(ai_strategy_response)
+                except json.JSONDecodeError:
+                    match = re.search(r'\{.*\}', ai_strategy_response, re.DOTALL)
+                    strategy_json = json.loads(match.group(0)) if match else {}
+
+                # 1. OVERWRITE the messy wall of text with the clean Top 3 AI summary
+                historical_intel["competitors"] = strategy_json.get("top_3_competitors", "Could not extract top competitors.")
+                
+                # 2. Extract the Senior Consultant Advice
+                ai_advice = strategy_json.get("strategic_advice", "Strategy generation failed.")
+                
                 base_advice = logic_decisions.get("strategic_advice", "")
                 if base_advice and base_advice != "Not Specified":
-                    logic_decisions["strategic_advice"] = f"{base_advice}\n\n**🤖 AI Competitive Strategy Assessment:**\n{ai_strategy}"
+                    logic_decisions["strategic_advice"] = f"{base_advice}\n\n**🤖 Senior Consultant Strategy:**\n{ai_advice}"
                 else:
-                    logic_decisions["strategic_advice"] = f"**🤖 AI Competitive Strategy Assessment:**\n{ai_strategy}"
+                    logic_decisions["strategic_advice"] = f"**🤖 Senior Consultant Strategy:**\n{ai_advice}"
+                    
             except Exception as e:
                 print(f"Failed to generate competitive strategy: {e}")
                 pass
