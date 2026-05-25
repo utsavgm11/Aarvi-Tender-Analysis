@@ -24,7 +24,6 @@ const AnalyticsDashboard = ({ onBack }) => {
   const [error, setError] = useState(null);
 
   // 1. Unified Fetch Logic
-  // 1. Unified Fetch Logic
   // ✅ CRITICAL UPDATE: Fetching now includes the Manager Silo logic and Admin Bypass
   const fetchData = useCallback(async (isAutoPoll = false) => {
     if (!isAutoPoll) setIsRefreshing(true);
@@ -81,30 +80,30 @@ const AnalyticsDashboard = ({ onBack }) => {
   }, [tenders, selectedYear]);
 
   return (
-    <div className="min-h-screen p-8 bg-slate-50">
+    <div className="min-h-screen p-4 sm:p-6 md:p-8 bg-slate-50">
       {/* Header */}
-      <div className="flex justify-between items-center mb-8">
-        <div>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 sm:gap-0 mb-6 sm:mb-8">
+        <div className="w-full sm:w-auto">
           {onBack && (
-            <button onClick={onBack} className="flex items-center gap-1 text-slate-400 hover:text-indigo-600 font-bold mb-2 transition-colors">
-              <ArrowLeft size={16} /> Back to Management
+            <button onClick={onBack} className="flex items-center gap-1 text-slate-400 hover:text-indigo-600 font-bold mb-2 transition-colors text-sm sm:text-base">
+              <ArrowLeft size={16} /> <span className="hidden sm:inline">Back to Management</span><span className="sm:hidden">Back</span>
             </button>
           )}
-          <div className="flex items-center gap-3">
-            <h1 className="text-3xl font-black text-slate-800 tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-slate-800 to-slate-500">
+          <div className="flex items-center gap-2 sm:gap-3">
+            <h1 className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-slate-800 to-slate-500">
               Executive Insights
             </h1>
-            {isRefreshing && <RefreshCcw size={16} className="animate-spin text-indigo-500" />}
+            {isRefreshing && <RefreshCcw size={16} className="animate-spin text-indigo-500 shrink-0" />}
           </div>
         </div>
         
         {/* Financial Year Filter */}
-        <div className="flex flex-col items-end">
-          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 mr-2">Fiscal Period</label>
+        <div className="flex flex-col items-start sm:items-end w-full sm:w-auto">
+          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 sm:mr-2">Fiscal Period</label>
           <select 
             value={selectedYear} 
             onChange={(e) => setSelectedYear(e.target.value)}
-            className="p-3 bg-white border border-slate-200 rounded-2xl font-black text-slate-700 shadow-sm outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all cursor-pointer min-w-[160px]"
+            className="p-2 sm:p-3 bg-white border border-slate-200 rounded-xl sm:rounded-2xl text-sm sm:text-base font-black text-slate-700 shadow-sm outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all cursor-pointer w-full sm:w-auto sm:min-w-[160px]"
           >
             {availableYears.map(year => (
               <option key={year} value={year}>{year === 'All' ? '📁 All Combined' : `📅 FY ${year}`}</option>
@@ -114,42 +113,48 @@ const AnalyticsDashboard = ({ onBack }) => {
       </div>
 
       {error && (
-        <div className="p-4 mb-8 bg-rose-50 text-rose-600 rounded-2xl text-sm font-bold flex items-center gap-3 border border-rose-100 animate-pulse">
-           ⚠️ {error}
+        <div className="p-3 sm:p-4 mb-6 sm:mb-8 bg-rose-50 text-rose-600 rounded-xl sm:rounded-2xl text-xs sm:text-sm font-bold flex items-center gap-2 sm:gap-3 border border-rose-100 animate-pulse">
+            <span className="shrink-0">⚠️</span> <span>{error}</span>
         </div>
       )}
 
       {loading ? (
-        <div className="flex flex-col items-center justify-center h-96 text-slate-400">
-            <RefreshCcw className="animate-spin mb-4" size={32} />
-            <p className="font-bold animate-pulse">Calculating Real-time Analytics...</p>
+        <div className="flex flex-col items-center justify-center h-64 sm:h-96 text-slate-400">
+            <RefreshCcw className="animate-spin mb-3 sm:mb-4 w-6 h-6 sm:w-8 sm:h-8" />
+            <p className="font-bold animate-pulse text-sm sm:text-base">Calculating Real-time Analytics...</p>
         </div>
       ) : (
-        <div className="space-y-8 animate-in fade-in duration-500">
+        <div className="space-y-6 sm:space-y-8 animate-in fade-in duration-500">
           {/* KPI GRID - Uses data directly from the filtered backend endpoint */}
           <KPICardGroup stats={kpiData} />
 
           {/* CHARTS GRID - All charts receive the filtered list */}
-          <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:gap-6 lg:gap-8 lg:grid-cols-2">
             
-            <div className="p-8 bg-white border border-slate-100 shadow-sm rounded-[2.5rem]">
+            <div className="p-4 sm:p-6 md:p-8 bg-white border border-slate-100 shadow-sm rounded-2xl sm:rounded-[2.5rem]">
               <StatusPieChart tenders={filteredTenders} />
             </div>
             
-            <div className="p-8 bg-white border border-slate-100 shadow-sm rounded-[2.5rem]">
-              <BiddingTrendChart tenders={filteredTenders} />
+            <div className="p-4 sm:p-6 md:p-8 bg-white border border-slate-100 shadow-sm rounded-2xl sm:rounded-[2.5rem] overflow-x-auto custom-scrollbar">
+              <div className="min-w-[400px]">
+                <BiddingTrendChart tenders={filteredTenders} />
+              </div>
             </div>
 
-            <div className="p-8 bg-white border border-slate-100 shadow-sm rounded-[2.5rem]">
-              <ClientBarChart tenders={filteredTenders} />
+            <div className="p-4 sm:p-6 md:p-8 bg-white border border-slate-100 shadow-sm rounded-2xl sm:rounded-[2.5rem] overflow-x-auto custom-scrollbar">
+              <div className="min-w-[400px]">
+                <ClientBarChart tenders={filteredTenders} />
+              </div>
             </div>
             
-            <div className="p-8 bg-white border border-slate-100 shadow-sm rounded-[2.5rem]">
-              <ClientPerformanceChart tenders={filteredTenders} />
+            <div className="p-4 sm:p-6 md:p-8 bg-white border border-slate-100 shadow-sm rounded-2xl sm:rounded-[2.5rem] overflow-x-auto custom-scrollbar">
+              <div className="min-w-[400px]">
+                <ClientPerformanceChart tenders={filteredTenders} />
+              </div>
             </div>
 
             {/* ROW 4: Tender Map (Full Width) */}
-            <div className="p-8 bg-white border border-slate-100 shadow-sm rounded-[2.5rem] col-span-1 lg:col-span-2 h-[500px]">
+            <div className="p-4 sm:p-6 md:p-8 bg-white border border-slate-100 shadow-sm rounded-2xl sm:rounded-[2.5rem] col-span-1 lg:col-span-2 h-[400px] sm:h-[500px]">
               <TenderMap tenders={filteredTenders} />
             </div>
 

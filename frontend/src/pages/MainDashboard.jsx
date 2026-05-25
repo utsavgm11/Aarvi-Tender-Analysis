@@ -41,12 +41,11 @@ const MainDashboard = ({ currentSessionId, onSessionSelect }) => {
   return (
     <div className="w-full bg-[#0f172a]">
       
-     
-
       {/* SECTION 2: THE MAIN APPLICATION INTERFACE */}
       <section 
         ref={dashboardSectionRef}
-        className="relative z-10 h-screen w-full bg-slate-50 flex shadow-[0_-20px_50px_rgba(0,0,0,0.5)]"
+        // Swapped h-screen to h-[100dvh] for perfect iOS/Mobile viewport sizing
+        className="relative z-10 h-[100dvh] w-full bg-slate-50 flex shadow-[0_-20px_50px_rgba(0,0,0,0.5)]"
       >
         {/* Sidebar with Navigation Props AND Chat Session Props */}
         <Sidebar 
@@ -59,7 +58,7 @@ const MainDashboard = ({ currentSessionId, onSessionSelect }) => {
         />
 
         {/* Main Content Area */}
-        <div className="flex-1 flex flex-col h-full overflow-hidden">
+        <div className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
           {/* Navbar with Hamburger toggle */}
           <Navbar 
             title={getNavbarTitle()}

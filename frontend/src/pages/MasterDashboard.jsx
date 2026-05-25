@@ -272,25 +272,33 @@ const MasterDashboard = () => {
   if (loading && tenders.length === 0) return <div className="p-20 text-center font-bold text-slate-400">Loading Database...</div>;
 
   return (
-    <div className="relative p-8 h-full bg-slate-50 overflow-y-auto">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        <StatCard title="Total Active" value={stats.totalActive} icon={<Clock className="text-blue-500"/>} />
-        <StatCard title="Tender Quoted" value={stats.quoted} icon={<Target className="text-amber-500"/>} />
-        <StatCard title="Tenders Won" value={stats.won} icon={<CheckCircle className="text-emerald-600"/>} />
-        <StatCard title="Tenders Lost" value={stats.lost} icon={<XCircle className="text-rose-500"/>} />
+    <div className="relative p-4 sm:p-6 md:p-8 h-full bg-slate-50 overflow-y-auto">
+      
+      {/* 📊 Responsive Stats Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6 sm:mb-8">
+        <StatCard title="Total Active" value={stats.totalActive} icon={<Clock className="text-blue-500 w-5 h-5 sm:w-6 sm:h-6"/>} />
+        <StatCard title="Tender Quoted" value={stats.quoted} icon={<Target className="text-amber-500 w-5 h-5 sm:w-6 sm:h-6"/>} />
+        <StatCard title="Tenders Won" value={stats.won} icon={<CheckCircle className="text-emerald-600 w-5 h-5 sm:w-6 sm:h-6"/>} />
+        <StatCard title="Tenders Lost" value={stats.lost} icon={<XCircle className="text-rose-500 w-5 h-5 sm:w-6 sm:h-6"/>} />
       </div>
 
-      <div className="flex justify-between items-center mb-6">
-        <div className="flex gap-4 items-center">
-          <div className="relative w-96">
-            <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
-            <input className="w-full pl-10 py-2 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-500 transition-all" placeholder="Search Client or Tender..." onChange={(e) => setSearchTerm(e.target.value)} />
+      {/* 🔍 Search & Filters Bar */}
+      <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-4 mb-6">
+        
+        <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-stretch sm:items-center w-full lg:w-auto">
+          <div className="relative w-full sm:w-72 lg:w-96">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+            <input 
+              className="w-full pl-10 pr-4 py-2.5 sm:py-2 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm sm:text-base" 
+              placeholder="Search Client or Tender..." 
+              onChange={(e) => setSearchTerm(e.target.value)} 
+            />
           </div>
           
           <select 
             value={selectedFY} 
             onChange={(e) => setSelectedFY(e.target.value)}
-            className="bg-white border border-slate-200 px-4 py-2 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium text-slate-600 cursor-pointer"
+            className="bg-white border border-slate-200 px-4 py-2.5 sm:py-2 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium text-slate-600 cursor-pointer text-sm sm:text-base w-full sm:w-auto"
           >
             {availableFYs.map(fy => (
               <option key={fy} value={fy}>{fy === 'All' ? 'All Financial Years' : fy}</option>
@@ -298,265 +306,281 @@ const MasterDashboard = () => {
           </select>
         </div>
 
-        <div className="flex gap-3">
-          <button onClick={openAddModal} className="bg-emerald-600 hover:bg-emerald-700 transition-colors text-white px-5 py-2 rounded-lg font-bold flex items-center gap-2"><Plus size={16}/> Add Tender</button>
-          <button onClick={handleDownload} className="bg-slate-800 hover:bg-slate-900 transition-colors text-white px-5 py-2 rounded-lg font-bold flex items-center gap-2"><FileText size={16} /> Export CSV</button>
+        <div className="flex flex-row gap-2 sm:gap-3 w-full lg:w-auto">
+          <button onClick={openAddModal} className="flex-1 lg:flex-none justify-center bg-emerald-600 hover:bg-emerald-700 transition-colors text-white px-4 sm:px-5 py-2.5 sm:py-2 rounded-xl sm:rounded-lg font-bold flex items-center gap-2 text-sm sm:text-base">
+            <Plus size={16}/> <span className="hidden sm:inline">Add Tender</span><span className="sm:hidden">Add</span>
+          </button>
+          <button onClick={handleDownload} className="flex-1 lg:flex-none justify-center bg-slate-800 hover:bg-slate-900 transition-colors text-white px-4 sm:px-5 py-2.5 sm:py-2 rounded-xl sm:rounded-lg font-bold flex items-center gap-2 text-sm sm:text-base">
+            <FileText size={16} /> <span className="hidden sm:inline">Export CSV</span><span className="sm:hidden">Export</span>
+          </button>
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border overflow-hidden shadow-sm">
-        <table className="w-full text-left">
-          <thead className="bg-slate-900 text-white text-xs uppercase tracking-wider">
-            <tr>
-              <th className="p-4">Client</th>
-              <th className="p-4">Tender No</th>
-              <th className="p-4">Due Date</th>
-              <th className="p-4">Status</th>
-              <th className="p-4 text-center">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sortedTenders.map((t) => (
-              <tr key={t.tender_no} className={`border-b text-sm transition-all hover:bg-slate-50 ${getRowStyle(t.due_date)}`}>
-                <td className="p-4 font-bold text-slate-700">{t.name_of_client}</td>
-                <td className="p-4 font-mono text-slate-500">{t.tender_no}</td>
-                <td className="p-4 font-bold">{t.due_date ? new Date(t.due_date).toLocaleDateString() : 'N/A'}</td>
-                <td className="p-4">
-                  <select 
-                    value={t.tender_status || 'Pending'} 
-                    onChange={(e) => handleStatusChange(t.tender_no, e.target.value)} 
-                    className="bg-transparent border p-1 rounded font-black text-[10px] uppercase text-indigo-600 outline-none cursor-pointer hover:bg-indigo-50"
-                  >
-                    <option value="Pending">Pending</option>
-                    <option value="Tender Quoted">Tender Quoted</option>
-                    <option value="Tender Won">Tender Won</option>
-                    <option value="Tender Lost">Tender Lost</option>
-                    <option value="Tender Regret">Tender Regret</option>
-                    <option value="Tender Cancelled">Tender Cancelled</option>
-                  </select>
-                </td>
-                <td className="p-4 text-center">
-                  <button onClick={() => openEditModal(t)} className="p-2 text-slate-400 hover:text-indigo-600 transition-colors">
-                    <Edit3 size={18} />
-                  </button>
-                </td>
+      {/* 📋 Responsive Data Table Container */}
+      <div className="bg-white rounded-xl sm:rounded-2xl border shadow-sm w-full">
+        {/* Added overflow-x-auto to make the table scroll horizontally on mobile */}
+        <div className="overflow-x-auto custom-scrollbar">
+          <table className="w-full text-left min-w-[700px]">
+            <thead className="bg-slate-900 text-white text-xs uppercase tracking-wider">
+              <tr>
+                <th className="p-3 sm:p-4 whitespace-nowrap">Client</th>
+                <th className="p-3 sm:p-4 whitespace-nowrap">Tender No</th>
+                <th className="p-3 sm:p-4 whitespace-nowrap">Due Date</th>
+                <th className="p-3 sm:p-4 whitespace-nowrap">Status</th>
+                <th className="p-3 sm:p-4 text-center whitespace-nowrap">Action</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {sortedTenders.length === 0 ? (
+                <tr>
+                  <td colSpan="5" className="p-8 text-center text-slate-400 italic">No tenders match your search criteria.</td>
+                </tr>
+              ) : (
+                sortedTenders.map((t) => (
+                  <tr key={t.tender_no} className={`border-b text-xs sm:text-sm transition-all hover:bg-slate-50 ${getRowStyle(t.due_date)}`}>
+                    <td className="p-3 sm:p-4 font-bold text-slate-700 max-w-[150px] sm:max-w-[250px] truncate" title={t.name_of_client}>{t.name_of_client}</td>
+                    <td className="p-3 sm:p-4 font-mono text-slate-500 whitespace-nowrap">{t.tender_no}</td>
+                    <td className="p-3 sm:p-4 font-bold whitespace-nowrap">{t.due_date ? new Date(t.due_date).toLocaleDateString() : 'N/A'}</td>
+                    <td className="p-3 sm:p-4">
+                      <select 
+                        value={t.tender_status || 'Pending'} 
+                        onChange={(e) => handleStatusChange(t.tender_no, e.target.value)} 
+                        className="bg-transparent border p-1 rounded font-black text-[9px] sm:text-[10px] uppercase text-indigo-600 outline-none cursor-pointer hover:bg-indigo-50 w-full min-w-[100px]"
+                      >
+                        <option value="Pending">Pending</option>
+                        <option value="Tender Quoted">Tender Quoted</option>
+                        <option value="Tender Won">Tender Won</option>
+                        <option value="Tender Lost">Tender Lost</option>
+                        <option value="Tender Regret">Tender Regret</option>
+                        <option value="Tender Cancelled">Tender Cancelled</option>
+                      </select>
+                    </td>
+                    <td className="p-3 sm:p-4 text-center">
+                      <button onClick={() => openEditModal(t)} className="p-1.5 sm:p-2 text-slate-400 hover:text-indigo-600 transition-colors">
+                        <Edit3 size={18} className="w-[16px] h-[16px] sm:w-[18px] sm:h-[18px]" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* 👑 MASTER FORM CONTAINER PANEL */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white p-8 rounded-[2rem] w-full max-w-5xl max-h-[90vh] overflow-y-auto shadow-2xl relative custom-scrollbar">
-            <button onClick={() => setIsModalOpen(false)} className="absolute top-6 right-6 text-slate-400 hover:text-slate-800 transition-colors"><X size={24} /></button>
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-2 sm:p-4 animate-in fade-in duration-200">
+          <div className="bg-white p-4 sm:p-6 md:p-8 rounded-[1.5rem] sm:rounded-[2rem] w-full max-w-5xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto shadow-2xl relative custom-scrollbar flex flex-col animate-in zoom-in-95 duration-200">
+            <button onClick={() => setIsModalOpen(false)} className="absolute top-4 right-4 sm:top-6 sm:right-6 text-slate-400 hover:text-slate-800 transition-colors bg-white rounded-full sm:bg-transparent p-1 sm:p-0 z-10 shadow-sm sm:shadow-none"><X size={20} className="sm:w-[24px] sm:h-[24px]" /></button>
             
-            <h2 className="text-2xl font-black text-slate-800 mb-2">
+            <h2 className="text-xl sm:text-2xl font-black text-slate-800 mb-2 sm:mb-4 pr-8 shrink-0">
               {modalMode === 'add' ? 'Add New Tender' : 'Edit Tender Details'}
             </h2>
 
             {/* 📑 DYNAMIC TAB SWITCHER HEADER HEADER */}
             {formData.tender_status === 'Tender Lost' && (
-              <div className="flex border-b border-slate-100 mb-6 gap-2">
+              <div className="flex flex-row border-b border-slate-100 mb-4 sm:mb-6 gap-1 sm:gap-2 shrink-0 overflow-x-auto custom-scrollbar">
                 <button
                   type="button"
                   onClick={() => setActiveFormTab('core')}
-                  className={`flex items-center gap-2 px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 ${activeFormTab === 'core' ? 'border-b-indigo-600 text-indigo-600 bg-indigo-50/40 rounded-t-xl' : 'border-b-transparent text-slate-400 hover:text-slate-600'}`}
+                  className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-all border-b-2 whitespace-nowrap ${activeFormTab === 'core' ? 'border-b-indigo-600 text-indigo-600 bg-indigo-50/40 rounded-t-xl' : 'border-b-transparent text-slate-400 hover:text-slate-600'}`}
                 >
-                  <LayoutGrid size={16} /> Core Technical Details
+                  <LayoutGrid size={14} className="sm:w-[16px] sm:h-[16px]" /> Core Technical Details
                 </button>
                 <button
                   type="button"
                   onClick={() => setActiveFormTab('loss_intel')}
-                  className={`flex items-center gap-2 px-5 py-3 text-xs font-bold uppercase tracking-wider transition-all border-b-2 ${activeFormTab === 'loss_intel' ? 'border-b-rose-600 text-rose-600 bg-rose-50/40 rounded-t-xl' : 'border-b-transparent text-slate-400 hover:text-slate-600'}`}
+                  className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2.5 sm:py-3 text-[10px] sm:text-xs font-bold uppercase tracking-wider transition-all border-b-2 whitespace-nowrap ${activeFormTab === 'loss_intel' ? 'border-b-rose-600 text-rose-600 bg-rose-50/40 rounded-t-xl' : 'border-b-transparent text-slate-400 hover:text-slate-600'}`}
                 >
-                  <BarChart3 size={16} /> L1 - L5 Loss Intelligence
+                  <BarChart3 size={14} className="sm:w-[16px] sm:h-[16px]" /> L1 - L5 Loss Intelligence
                 </button>
               </div>
             )}
 
-            <form onSubmit={handleSaveTender} className="space-y-6">
+            <form onSubmit={handleSaveTender} className="flex flex-col flex-1 min-h-0">
               
-              {/* PAGE TAB 1: CORE DATA FORM PANEL */}
-              {activeFormTab === 'core' && (
-                <div className="space-y-6 transition-all duration-200">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    <InputField label="Tender No *" name="tender_no" value={formData.tender_no} onChange={handleChange} required disabled={modalMode === 'edit'} />
-                    <InputField label="Name of Client *" name="name_of_client" value={formData.name_of_client} onChange={handleChange} required />
-                    <SelectField label="Tender Status" name="tender_status" value={formData.tender_status} onChange={handleChange} options={['Pending', 'Tender Quoted', 'Tender Won', 'Tender Lost', 'Tender Regret', 'Tender Cancelled']} />
-                    <InputField label="Received Date" name="received_date" type="date" value={formData.received_date} onChange={handleChange} />
-                    <InputField label="Due Date" name="due_date" type="date" value={formData.due_date} onChange={handleChange} />
-                    <InputField label="Pre-Bidding Date" name="pre_bidding_date" type="date" value={formData.pre_bidding_date} onChange={handleChange} />
-                    <InputField label="Location" name="location" value={formData.location} onChange={handleChange} />
-                    <InputField label="Tender Open Price" name="tender_open_price" value={formData.tender_open_price} onChange={handleChange} />
-                    <InputField label="Quoted Value" name="quoted_value" value={formData.quoted_value} onChange={handleChange} />
-                    <SelectField label="Price Status" name="price_status" value={formData.price_status} onChange={handleChange} options={['Pending', 'Submitted', 'Not Applicable']} />
-                    <InputField label="Project Manager" name="project_manager" value={formData.project_manager} onChange={handleChange} />
-                    <InputField label="Docs Prepared By" name="docs_prepared_by" value={formData.docs_prepared_by} onChange={handleChange} />
-                    <InputField label="Financial Year" name="financial_year" value={formData.financial_year} onChange={handleChange} />
-                    <InputField label="EMD Value" name="emd" value={formData.emd} onChange={handleChange} />
-                    <SelectField label="EMD Status" name="emd_status" value={formData.emd_status} onChange={handleChange} options={['Pending', 'Submitted', 'Exempted', 'Returned']} />
-                    <SelectField label="Tender Fee Status" name="tender_fee_status" value={formData.tender_fee_status} onChange={handleChange} options={['Pending', 'Paid', 'Exempted']} />
-                    <InputField label="Source (Portal/Email)" name="source" value={formData.source} onChange={handleChange} />
+              <div className="overflow-y-auto flex-1 custom-scrollbar pb-2">
+                {/* PAGE TAB 1: CORE DATA FORM PANEL */}
+                {activeFormTab === 'core' && (
+                  <div className="space-y-4 sm:space-y-6 transition-all duration-200 pr-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+                      <InputField label="Tender No *" name="tender_no" value={formData.tender_no} onChange={handleChange} required disabled={modalMode === 'edit'} />
+                      <InputField label="Name of Client *" name="name_of_client" value={formData.name_of_client} onChange={handleChange} required />
+                      <SelectField label="Tender Status" name="tender_status" value={formData.tender_status} onChange={handleChange} options={['Pending', 'Tender Quoted', 'Tender Won', 'Tender Lost', 'Tender Regret', 'Tender Cancelled']} />
+                      <InputField label="Received Date" name="received_date" type="date" value={formData.received_date} onChange={handleChange} />
+                      <InputField label="Due Date" name="due_date" type="date" value={formData.due_date} onChange={handleChange} />
+                      <InputField label="Pre-Bidding Date" name="pre_bidding_date" type="date" value={formData.pre_bidding_date} onChange={handleChange} />
+                      <InputField label="Location" name="location" value={formData.location} onChange={handleChange} />
+                      <InputField label="Tender Open Price" name="tender_open_price" value={formData.tender_open_price} onChange={handleChange} />
+                      <InputField label="Quoted Value" name="quoted_value" value={formData.quoted_value} onChange={handleChange} />
+                      <SelectField label="Price Status" name="price_status" value={formData.price_status} onChange={handleChange} options={['Pending', 'Submitted', 'Not Applicable']} />
+                      <InputField label="Project Manager" name="project_manager" value={formData.project_manager} onChange={handleChange} />
+                      <InputField label="Docs Prepared By" name="docs_prepared_by" value={formData.docs_prepared_by} onChange={handleChange} />
+                      <InputField label="Financial Year" name="financial_year" value={formData.financial_year} onChange={handleChange} />
+                      <InputField label="EMD Value" name="emd" value={formData.emd} onChange={handleChange} />
+                      <SelectField label="EMD Status" name="emd_status" value={formData.emd_status} onChange={handleChange} options={['Pending', 'Submitted', 'Exempted', 'Returned']} />
+                      <SelectField label="Tender Fee Status" name="tender_fee_status" value={formData.tender_fee_status} onChange={handleChange} options={['Pending', 'Paid', 'Exempted']} />
+                      <InputField label="Source (Portal/Email)" name="source" value={formData.source} onChange={handleChange} />
+                    </div>
+                    <div className="grid grid-cols-1 gap-4 sm:gap-6">
+                      <div><label className="block text-[10px] sm:text-[11px] uppercase font-bold text-slate-500 mb-1.5 sm:mb-2">Description</label><textarea name="description" value={formData.description} onChange={handleChange} rows="2" className="w-full p-2.5 sm:p-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm sm:text-base"></textarea></div>
+                      <div><label className="block text-[10px] sm:text-[11px] uppercase font-bold text-slate-500 mb-1.5 sm:mb-2">Comments</label><textarea name="comments" value={formData.comments} onChange={handleChange} rows="2" className="w-full p-2.5 sm:p-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm sm:text-base"></textarea></div>
+                    </div>
                   </div>
-                  <div className="grid grid-cols-1 gap-6">
-                    <div><label className="block text-[11px] uppercase font-bold text-slate-500 mb-2">Description</label><textarea name="description" value={formData.description} onChange={handleChange} rows="2" className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"></textarea></div>
-                    <div><label className="block text-[11px] uppercase font-bold text-slate-500 mb-2">Comments</label><textarea name="comments" value={formData.comments} onChange={handleChange} rows="2" className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"></textarea></div>
-                  </div>
-                </div>
-              )}
+                )}
 
-              {/* 📊 PAGE TAB 2: SLIDING LEADERBOARD DATA MATRIX VIEW */}
-              {activeFormTab === 'loss_intel' && formData.tender_status === 'Tender Lost' && (
-                <div className="space-y-6 transition-all duration-300 bg-slate-50/50 p-6 rounded-2xl border border-slate-100">
-                  <div className="grid md:grid-cols-2 gap-4">
+                {/* 📊 PAGE TAB 2: SLIDING LEADERBOARD DATA MATRIX VIEW */}
+                {activeFormTab === 'loss_intel' && formData.tender_status === 'Tender Lost' && (
+                  <div className="space-y-4 sm:space-y-6 transition-all duration-300 bg-slate-50/50 p-3 sm:p-6 rounded-xl sm:rounded-2xl border border-slate-100 pr-1 sm:pr-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                      <div>
+                        <label className="block text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Aarvi's Final Position</label>
+                        <select 
+                          name="aarvi_rank"
+                          value={formData.aarvi_rank} 
+                          onChange={handleChange}
+                          className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-xs sm:text-sm font-semibold"
+                        >
+                          <option value="">Select Rank...</option>
+                          <option value="L2">L2 (Runner Up)</option>
+                          <option value="L3">L3</option>
+                          <option value="L4">L4</option>
+                          <option value="L5">L5</option>
+                          <option value="L5+">Lower than L5</option>
+                          <option value="Disqualified">Technically Disqualified</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Primary Reason for Loss</label>
+                        <select 
+                          name="reason_for_loss"
+                          value={formData.reason_for_loss} 
+                          onChange={handleChange}
+                          className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-xs sm:text-sm font-semibold"
+                        >
+                          <option value="">Select Reason...</option>
+                          <option value="Price Too High">Price Too High (Commercial)</option>
+                          <option value="Technical Qualification">Lack of Technical Experience</option>
+                          <option value="Financial Criteria">Failed Financial Criteria</option>
+                          <option value="Client Preference">Client Preference/Relationship</option>
+                          <option value="Documentation Error">Documentation Error</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Leaderboard Array Form Fields */}
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Aarvi's Final Position</label>
-                      <select 
-                        name="aarvi_rank"
-                        value={formData.aarvi_rank} 
-                        onChange={handleChange}
-                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-sm font-semibold"
-                      >
-                        <option value="">Select Rank...</option>
-                        <option value="L2">L2 (Runner Up)</option>
-                        <option value="L3">L3</option>
-                        <option value="L4">L4</option>
-                        <option value="L5">L5</option>
-                        <option value="L5+">Lower than L5</option>
-                        <option value="Disqualified">Technically Disqualified</option>
-                      </select>
+                      <div className="flex justify-between items-center mb-2 sm:mb-3">
+                        <label className="block text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider">Bidding Leaderboard Matrix</label>
+                        <button
+                          type="button"
+                          onClick={addCompetitorRow}
+                          className="flex items-center gap-1 text-[10px] sm:text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-2 sm:px-2.5 py-1.5 rounded-lg transition-all"
+                        >
+                          <Plus size={14} /> <span className="hidden sm:inline">Add Position Row</span><span className="sm:hidden">Add</span>
+                        </button>
+                      </div>
+
+                      <div className="space-y-3 sm:space-y-2 pr-1">
+                        {formData.competitors.map((row, index) => (
+                          <div key={index} className="grid grid-cols-2 sm:grid-cols-12 gap-2 items-center bg-white p-3 sm:p-2 rounded-xl border border-slate-200/60">
+                            <div className="col-span-1 sm:col-span-2 order-1 sm:order-none">
+                              <select
+                                value={row.rank}
+                                onChange={(e) => handleCompetitorChange(index, 'rank', e.target.value)}
+                                className="w-full p-1.5 sm:p-1.5 bg-slate-50 border rounded-lg text-xs font-bold sm:text-center outline-none"
+                              >
+                                <option value="L1">L1</option>
+                                <option value="L2">L2</option>
+                                <option value="L3">L3</option>
+                                <option value="L4">L4</option>
+                                <option value="L5">L5</option>
+                              </select>
+                            </div>
+
+                            <div className="col-span-2 sm:col-span-4 order-3 sm:order-none">
+                              <input
+                                type="text"
+                                value={row.company}
+                                disabled={row.company === 'Aarvi Encon'}
+                                onChange={(e) => handleCompetitorChange(index, 'company', e.target.value)}
+                                placeholder={row.rank === 'L1' ? "Winning Bidder Name" : "Company Name"}
+                                required
+                                className="w-full p-2 sm:p-1.5 pl-3 sm:pl-2 border rounded-lg text-xs outline-none disabled:bg-indigo-50 disabled:text-indigo-800 disabled:font-bold"
+                              />
+                            </div>
+
+                            <div className="col-span-1 sm:col-span-3 order-4 sm:order-none">
+                              <input
+                                type="number"
+                                value={row.amount}
+                                onChange={(e) => handleCompetitorChange(index, 'amount', e.target.value)}
+                                placeholder="Bid Value (₹)"
+                                className="w-full p-2 sm:p-1.5 border rounded-lg text-xs outline-none font-mono"
+                              />
+                            </div>
+
+                            <div className="col-span-1 sm:col-span-2 order-5 sm:order-none">
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={row.percent_diff}
+                                disabled={row.rank === 'L1'}
+                                onChange={(e) => handleCompetitorChange(index, 'percent_diff', e.target.value)}
+                                placeholder="Gap %"
+                                className="w-full p-2 sm:p-1.5 border rounded-lg text-xs outline-none font-mono disabled:bg-slate-100 disabled:text-slate-400"
+                              />
+                            </div>
+
+                            <div className="col-span-1 sm:col-span-1 text-right sm:text-center order-2 sm:order-none flex justify-end">
+                              <button
+                                type="button"
+                                onClick={() => removeCompetitorRow(index)}
+                                className="text-slate-400 hover:text-rose-500 transition-colors p-1.5 sm:p-1 bg-slate-50 sm:bg-transparent rounded-lg sm:rounded-none"
+                              >
+                                <Trash2 size={16} className="sm:w-[14px] sm:h-[14px]" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
 
                     <div>
-                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Primary Reason for Loss</label>
-                      <select 
-                        name="reason_for_loss"
-                        value={formData.reason_for_loss} 
+                      <label className="block text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 mt-2 sm:mt-0">Strategy Notes / Management Remarks</label>
+                      <textarea
+                        name="post_bid_remarks"
+                        value={formData.post_bid_remarks}
                         onChange={handleChange}
-                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-sm font-semibold"
-                      >
-                        <option value="">Select Reason...</option>
-                        <option value="Price Too High">Price Too High (Commercial)</option>
-                        <option value="Technical Qualification">Lack of Technical Experience</option>
-                        <option value="Financial Criteria">Failed Financial Criteria</option>
-                        <option value="Client Preference">Client Preference/Relationship</option>
-                        <option value="Documentation Error">Documentation Error</option>
-                      </select>
+                        rows="3"
+                        placeholder="Type any internal operational notes here..."
+                        className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-xs sm:text-sm resize-none"
+                      ></textarea>
                     </div>
                   </div>
-
-                  {/* Leaderboard Array Form Fields */}
-                  <div>
-                    <div className="flex justify-between items-center mb-3">
-                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider">Bidding Leaderboard Matrix</label>
-                      <button
-                        type="button"
-                        onClick={addCompetitorRow}
-                        className="flex items-center gap-1 text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 px-2.5 py-1.5 rounded-lg transition-all"
-                      >
-                        <Plus size={14} /> Add Position Row
-                      </button>
-                    </div>
-
-                    <div className="space-y-2 pr-1">
-                      {formData.competitors.map((row, index) => (
-                        <div key={index} className="grid grid-cols-12 gap-2 items-center bg-white p-2 rounded-xl border border-slate-200/60">
-                          <div className="col-span-2">
-                            <select
-                              value={row.rank}
-                              onChange={(e) => handleCompetitorChange(index, 'rank', e.target.value)}
-                              className="w-full p-1.5 bg-slate-50 border rounded-lg text-xs font-bold text-center outline-none"
-                            >
-                              <option value="L1">L1</option>
-                              <option value="L2">L2</option>
-                              <option value="L3">L3</option>
-                              <option value="L4">L4</option>
-                              <option value="L5">L5</option>
-                            </select>
-                          </div>
-
-                          <div className="col-span-4">
-                            <input
-                              type="text"
-                              value={row.company}
-                              disabled={row.company === 'Aarvi Encon'}
-                              onChange={(e) => handleCompetitorChange(index, 'company', e.target.value)}
-                              placeholder={row.rank === 'L1' ? "Winning Bidder Name" : "Company Name"}
-                              required
-                              className="w-full p-1.5 pl-2 border rounded-lg text-xs outline-none disabled:bg-indigo-50 disabled:text-indigo-800 disabled:font-bold"
-                            />
-                          </div>
-
-                          <div className="col-span-3">
-                            <input
-                              type="number"
-                              value={row.amount}
-                              onChange={(e) => handleCompetitorChange(index, 'amount', e.target.value)}
-                              placeholder="Bid Value (₹)"
-                              className="w-full p-1.5 border rounded-lg text-xs outline-none font-mono"
-                            />
-                          </div>
-
-                          <div className="col-span-2">
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={row.percent_diff}
-                              disabled={row.rank === 'L1'}
-                              onChange={(e) => handleCompetitorChange(index, 'percent_diff', e.target.value)}
-                              placeholder="Gap %"
-                              className="w-full p-1.5 border rounded-lg text-xs outline-none font-mono disabled:bg-slate-100 disabled:text-slate-400"
-                            />
-                          </div>
-
-                          <div className="col-span-1 text-center">
-                            <button
-                              type="button"
-                              onClick={() => removeCompetitorRow(index)}
-                              className="text-slate-400 hover:text-rose-500 transition-colors p-1"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Strategy Notes / Management Remarks</label>
-                    <textarea
-                      name="post_bid_remarks"
-                      value={formData.post_bid_remarks}
-                      onChange={handleChange}
-                      rows="3"
-                      placeholder="Type any internal operational notes here..."
-                      className="w-full p-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none text-xs resize-none"
-                    ></textarea>
-                  </div>
-                </div>
-              )}
+                )}
+              </div>
 
               {/* Modal Control Actions Footer */}
-              <div className="pt-4 flex justify-between items-center border-t">
+              <div className="pt-4 sm:pt-6 mt-4 border-t border-slate-100 shrink-0 flex flex-col sm:flex-row justify-between items-center gap-3 sm:gap-0 bg-white">
                 {modalMode === 'edit' ? (
                   <button 
                     type="button" 
                     onClick={() => handleDeleteTender(formData.tender_no)}
-                    className="px-6 py-3 font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition-colors flex items-center gap-2"
+                    className="w-full sm:w-auto px-4 sm:px-6 py-2.5 sm:py-3 font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition-colors flex items-center justify-center gap-2 text-sm sm:text-base order-2 sm:order-1"
                   >
-                    <Trash2 size={18} /> Delete Tender
+                    <Trash2 size={16} className="sm:w-[18px] sm:h-[18px]"/> <span className="sm:inline">Delete Tender</span>
                   </button>
                 ) : (
-                  <div></div>
+                  <div className="hidden sm:block order-1"></div>
                 )}
 
-                <div className="flex gap-3">
-                  <button type="button" onClick={() => setIsModalOpen(false)} className="px-6 py-3 font-bold text-slate-500 hover:bg-slate-100 rounded-xl transition-colors">Cancel</button>
-                  <button type="submit" disabled={loading} className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-colors flex items-center gap-2">
-                    <Save size={16}/> {loading ? 'Saving...' : 'Save Tender Record'}
+                <div className="flex w-full sm:w-auto gap-2 sm:gap-3 order-1 sm:order-2">
+                  <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 sm:flex-none px-4 sm:px-6 py-2.5 sm:py-3 font-bold text-slate-500 bg-slate-50 sm:bg-transparent hover:bg-slate-100 rounded-xl transition-colors text-sm sm:text-base">Cancel</button>
+                  <button type="submit" disabled={loading} className="flex-[2] sm:flex-none justify-center px-4 sm:px-8 py-2.5 sm:py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-colors flex items-center gap-2 text-sm sm:text-base">
+                    <Save size={16}/> {loading ? 'Saving...' : <span className="truncate">Save Record</span>}
                   </button>
                 </div>
               </div>
@@ -576,23 +600,25 @@ const MasterDashboard = () => {
 };
 
 const StatCard = ({ title, value, icon }) => (
-  <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between hover:shadow-md transition-shadow">
-    <div><p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{title}</p><h3 className="text-3xl font-black text-slate-800 mt-1">{value}</h3></div>
-    <div className="p-4 bg-slate-50 rounded-2xl">{icon}</div>
+  <div className="bg-white p-4 sm:p-6 rounded-xl sm:rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between hover:shadow-md transition-shadow">
+    <div><p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest">{title}</p><h3 className="text-2xl sm:text-3xl font-black text-slate-800 mt-1">{value}</h3></div>
+    <div className="p-3 sm:p-4 bg-slate-50 rounded-xl sm:rounded-2xl">{icon}</div>
   </div>
 );
 
 const InputField = ({ label, name, type = "text", value, onChange, required = false, disabled = false }) => (
   <div>
-    <label className="block text-[11px] uppercase font-bold text-slate-500 mb-2">{label}</label>
-    <input type={type} name={name} value={value} onChange={onChange} required={required} disabled={disabled} className={`w-full p-3 border border-slate-200 rounded-xl outline-none transition-colors ${disabled ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500'}`} />
+    <label className="block text-[10px] sm:text-[11px] uppercase font-bold text-slate-500 mb-1.5 sm:mb-2">{label}</label>
+    <input type={type} name={name} value={value || ''} onChange={onChange} required={required} disabled={disabled} className={`w-full p-2.5 sm:p-3 border border-slate-200 rounded-xl outline-none transition-colors text-sm sm:text-base ${disabled ? 'bg-slate-100 text-slate-400 cursor-not-allowed' : 'focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-white'}`} />
   </div>
 );
 
 const SelectField = ({ label, name, value, onChange, options }) => (
   <div>
-    <label className="block text-[11px] uppercase font-bold text-slate-500 mb-2">{label}</label>
-    <select name={name} value={value} onChange={onChange} className="w-full p-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-white">{options.map(opt => <option key={opt} value={opt}>{opt}</option>)}</select>
+    <label className="block text-[10px] sm:text-[11px] uppercase font-bold text-slate-500 mb-1.5 sm:mb-2">{label}</label>
+    <select name={name} value={value || ''} onChange={onChange} className="w-full p-2.5 sm:p-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-white text-sm sm:text-base cursor-pointer">
+      {options.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+    </select>
   </div>
 );
 

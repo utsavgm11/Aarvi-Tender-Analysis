@@ -5,7 +5,7 @@ import { Send, FileUp, Loader2, Bot, User, CheckCircle2 } from 'lucide-react';
 import DecisionCard from '../components/ui/DecisionCard';
 
 // 3. Dynamic API URL (Better than hardcoding)
- const API_BASE_URL = import.meta.env.VITE_API_URL || "https://aarvi-tender-api.onrender.com";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "https://aarvi-tender-api.onrender.com";
 
 const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
   const [messages, setMessages] = useState([]);
@@ -195,31 +195,31 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
     }
   };
 
-  const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8001";
-
   return (
     <div className="flex flex-col h-full bg-slate-50 relative">
       {activeTender && (
-        <div className="bg-blue-900 text-white px-4 py-2 flex items-center justify-between text-xs font-medium shrink-0 shadow-md z-10">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 size={14} className="text-emerald-400" />
-            <span>Consulting on: {activeTender.tender_no || "Active Tender"}</span>
+        <div className="bg-blue-900 text-white px-3 sm:px-4 py-2 flex items-center justify-between text-[10px] sm:text-xs font-medium shrink-0 shadow-md z-10">
+          <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 mr-2">
+            <CheckCircle2 size={14} className="text-emerald-400 shrink-0" />
+            <span className="truncate">Consulting: {activeTender.tender_no || "Active Tender"}</span>
           </div>
-          <span className="opacity-60 truncate max-w-[200px]">{activeTender.client_name}</span>
+          <span className="opacity-60 truncate max-w-[100px] sm:max-w-[200px] md:max-w-xs shrink-0 text-right">
+            {activeTender.client_name}
+          </span>
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6 custom-scrollbar">
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.type === 'user' ? 'justify-end' : 'justify-start'}`}>
             {m.result ? (
               <DecisionCard result={m.result} onClose={() => {}} />
             ) : (
-              <div className={`flex items-start gap-3 max-w-[85%] md:max-w-2xl ${m.type === 'user' ? 'flex-row-reverse' : ''}`}>
-                <div className={`p-2 rounded-lg shrink-0 ${m.type === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
-                  {m.type === 'ai' ? <Bot size={18} /> : <User size={18} />}
+              <div className={`flex items-start gap-2 sm:gap-3 max-w-[92%] sm:max-w-[85%] md:max-w-2xl ${m.type === 'user' ? 'flex-row-reverse' : ''}`}>
+                <div className={`p-1.5 sm:p-2 rounded-lg shrink-0 ${m.type === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-600'}`}>
+                  {m.type === 'ai' ? <Bot size={16} className="sm:w-[18px] sm:h-[18px]" /> : <User size={16} className="sm:w-[18px] sm:h-[18px]" />}
                 </div>
-                <div className={`p-4 rounded-2xl shadow-sm text-sm leading-relaxed whitespace-pre-wrap ${
+                <div className={`p-3 sm:p-4 rounded-xl sm:rounded-2xl shadow-sm text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words ${
                   m.type === 'user' ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-white border rounded-tl-none text-slate-800'
                 }`}>
                   {m.text}
@@ -232,26 +232,26 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
         {isLoading && (
           <div className="flex justify-start my-4">
             {progress ? (
-              <div className="w-full max-w-2xl bg-indigo-50 border border-indigo-100 p-5 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 shadow-sm animate-pulse ml-12">
-                <div className="flex items-center gap-3">
-                  <Loader2 className="animate-spin text-indigo-600" size={20} />
-                  <span className="text-indigo-900 font-bold text-sm tracking-wide uppercase">AI Engine Scanning Document...</span>
+              <div className="w-full max-w-2xl bg-indigo-50 border border-indigo-100 p-3 sm:p-5 rounded-xl sm:rounded-2xl flex flex-col md:flex-row items-center justify-between gap-3 sm:gap-4 shadow-sm animate-pulse ml-0 sm:ml-10 md:ml-12">
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <Loader2 className="animate-spin text-indigo-600 shrink-0" size={18} className="sm:w-[20px] sm:h-[20px]" />
+                  <span className="text-indigo-900 font-bold text-xs sm:text-sm tracking-wide uppercase text-center sm:text-left">AI Engine Scanning Document...</span>
                 </div>
-                <div className="flex-1 w-full mx-4">
-                  <div className="h-2.5 bg-indigo-200 rounded-full overflow-hidden">
+                <div className="flex-1 w-full mx-0 sm:mx-4">
+                  <div className="h-2 sm:h-2.5 bg-indigo-200 rounded-full overflow-hidden">
                     <div 
                       className="bg-indigo-600 h-full transition-all duration-300 ease-out" 
                       style={{ width: `${(progress.current / progress.total) * 100}%` }}
                     ></div>
                   </div>
                 </div>
-                <span className="text-indigo-700 font-black text-sm">
+                <span className="text-indigo-700 font-black text-xs sm:text-sm shrink-0">
                   Pages ({progress.current}/{progress.total})
                 </span>
               </div>
             ) : (
-              <div className="flex items-center gap-3 text-slate-400 animate-pulse text-sm ml-12">
-                <Loader2 size={16} className="animate-spin" />
+              <div className="flex items-center gap-2 sm:gap-3 text-slate-400 animate-pulse text-xs sm:text-sm ml-0 sm:ml-10 md:ml-12">
+                <Loader2 size={14} className="animate-spin sm:w-[16px] sm:h-[16px]" />
                 Strategic Consultant is thinking...
               </div>
             )}
@@ -260,11 +260,11 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input section remains the same... */}
-      <div className="p-4 bg-white border-t shrink-0">
-        <div className="max-w-4xl mx-auto flex items-center gap-2 bg-slate-100 rounded-2xl p-1.5 border focus-within:border-blue-400 transition-all">
-          <label className="cursor-pointer p-2.5 hover:bg-white rounded-xl text-slate-500 transition-colors">
-            <FileUp size={22} />
+      {/* Input section */}
+      <div className="p-2 sm:p-4 bg-white border-t shrink-0">
+        <div className="max-w-4xl mx-auto flex items-center gap-1.5 sm:gap-2 bg-slate-100 rounded-xl sm:rounded-2xl p-1 sm:p-1.5 border focus-within:border-blue-400 transition-all">
+          <label className="cursor-pointer p-2 sm:p-2.5 hover:bg-white rounded-lg sm:rounded-xl text-slate-500 transition-colors">
+            <FileUp size={18} className="sm:w-[22px] sm:h-[22px]" />
             <input 
               type="file" 
               className="hidden" 
@@ -278,15 +278,15 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
             value={input} 
             onChange={(e) => setInput(e.target.value)} 
             onKeyDown={(e) => e.key === 'Enter' && handleChat()} 
-            className="flex-1 bg-transparent p-2.5 outline-none text-sm" 
-            placeholder={activeTender ? "Ask about margins, risks, or technicals..." : "Upload your tender files..."} 
+            className="flex-1 bg-transparent p-2 sm:p-2.5 outline-none text-xs sm:text-sm min-w-0" 
+            placeholder={activeTender ? "Ask about margins, risks..." : "Upload your tender files..."} 
           />
           <button 
             onClick={handleChat} 
             disabled={!input.trim()}
-            className={`p-2.5 rounded-xl transition-all ${input.trim() ? 'bg-blue-600 text-white shadow-md hover:bg-blue-700' : 'text-slate-400'}`}
+            className={`p-2 sm:p-2.5 rounded-lg sm:rounded-xl transition-all shrink-0 ${input.trim() ? 'bg-blue-600 text-white shadow-md hover:bg-blue-700' : 'text-slate-400'}`}
           >
-            <Send size={20} />
+            <Send size={16} className="sm:w-[20px] sm:h-[20px]" />
           </button>
         </div>
       </div>
