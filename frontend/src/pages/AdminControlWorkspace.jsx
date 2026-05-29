@@ -5,7 +5,7 @@ import {
   RefreshCw, Search, X, Save, Edit3, UserCheck 
 } from 'lucide-react';
 
-const API_BASE_URL ="http://localhost:8001";
+ const API_BASE_URL = import.meta.env.VITE_API_URL || "https://attract-appeals-recorded-able.trycloudflare.com";
 
 const AdminControlWorkspace = () => {
   const [activeView, setActiveView] = useState('users'); // 'users' or 'billing'

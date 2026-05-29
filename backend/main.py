@@ -39,26 +39,27 @@ app.add_middleware(
 # ----------------- DATABASE (UPDATED FOR PRODUCTION) -----------------
 def get_db_connection():
     try:
-        # Your live Neon Cloud URL
-        NEON_URL = "postgresql://neondb_owner:npg_djW0Dm5HAPOa@ep-twilight-block-apopzllz-pooler.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require"
+        # 🎯 Pull strictly from your .env file or hosting environment variables
+        db_url = os.getenv("DATABASE_URL")
         
-        # Pulls from Render Environment if available, otherwise uses the Neon URL automatically
-        db_url = os.getenv("DATABASE_URL", NEON_URL)
-        
-        # CRITICAL FIX: If your local Windows PC has an old "sqlite" URL stuck in its memory/env variables, 
-        # this will ignore it and force the Cloud URL instead.
-        if db_url and db_url.startswith("sqlite"):
-            db_url = NEON_URL
+        # Safety fallback check: If the environment variable is completely empty
+        if not db_url:
+            print("❌ Database Connection Error: DATABASE_URL is missing from environment!")
+            return None
             
-        # Connect strictly to the cloud
+        # CRITICAL FIX: If your local machine has an old "sqlite" URL stuck in memory,
+        # this safely flags it out so it doesn't crash the psycopg2 engine.
+        if db_url.startswith("sqlite"):
+            print("⚠️ Warning: Detected an invalid SQLite string in DATABASE_URL environment.")
+            return None
+            
+        # Establish a clean dictionary-mapped connection to the cloud
         conn = psycopg2.connect(db_url, cursor_factory=RealDictCursor)
-        
         return conn
         
     except Exception as e:
         print(f"❌ Database Connection Error: {e}")
         return None
-
 # ----------------- NEW: USAGE LOGGING HELPER -----------------
 def log_system_ai_usage(user_email: str, action_type: str, tender_no: str, input_tokens: int, output_tokens: int, estimated_cost: float):
     conn = get_db_connection()
