@@ -5,7 +5,7 @@ import { Send, FileUp, Loader2, Bot, User, CheckCircle2 } from 'lucide-react';
 import DecisionCard from '../components/ui/DecisionCard';
 
 // 3. Dynamic API URL (Better than hardcoding)
-const API_BASE_URL = import.meta.env.VITE_API_URL || "https://aarvi-tender-api.onrender.com";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "https://attract-appeals-recorded-able.trycloudflare.com";
 
 const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
   const [messages, setMessages] = useState([]);
@@ -18,7 +18,6 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
   const messagesEndRef = useRef(null);
   const pollingInterval = useRef(null);
 
-  
   // --- NEW: THE LOCK ---
   // This prevents the history fetch from wiping the screen during an upload
   const isOperationActive = useRef(false);
@@ -60,31 +59,29 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
   }, [currentSessionId]);
 
   const persistMessage = async (sessionId, role, content, title = null) => {
-  try {
-    // 1. Get the logged-in user's email
-    const userEmail = localStorage.getItem('userEmail');
+    try {
+      // 1. Get the logged-in user's email
+      const userEmail = localStorage.getItem('userEmail');
 
-    // 2. Format the content (keeping your logic for tender results)
-    const contentStr = typeof content === 'object' 
-      ? JSON.stringify({ isTenderResult: true, data: content }) 
-      : content;
+      // 2. Format the content (keeping your logic for tender results)
+      const contentStr = typeof content === 'object' 
+        ? JSON.stringify({ isTenderResult: true, data: content }) 
+        : content;
 
-  
+      await axios.post(`${API_BASE_URL}/chats/message`, {
+        session_id: sessionId,
+        role: role,
+        content: contentStr,
+        title: title,
+        user_email: userEmail // ✅ CRITICAL: Linking the message to the user for history
+      });
 
-    await axios.post(`${API_BASE_URL}/chats/message`, {
-      session_id: sessionId,
-      role: role,
-      content: contentStr,
-      title: title,
-      user_email: userEmail // ✅ CRITICAL: Linking the message to the user
-    });
-
-    if (onChatUpdated) onChatUpdated(); 
-  } catch (e) {
-    console.error("❌ Failed to save message to DB:", e);
-    // If you see 'Network Error' here, ensure your Python terminal is running
-  }
-};
+      if (onChatUpdated) onChatUpdated(); 
+    } catch (e) {
+      console.error("❌ Failed to save message to DB:", e);
+      // If you see 'Network Error' here, ensure your Python terminal is running
+    }
+  };
 
   const handleFileUpload = async (event) => {
     const files = event.target.files;
@@ -112,8 +109,12 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
     // Initialize UI progress so the bar appears immediately
     setProgress({ current: 0, total: 100 }); 
 
+    const userEmail = localStorage.getItem('userEmail') || 'unknown_user@aarviencon.com';
+
     const formData = new FormData();
     formData.append('task_id', taskId); // TASK ID FIRST
+    formData.append('user_email', userEmail); // ✅ NEW: Sent for Token Cost Metering
+
     for (let i = 0; i < files.length; i++) {
       formData.append('files', files[i]);
     }
@@ -173,14 +174,17 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
     setInput('');
     setIsLoading(true);
 
-    // ✅ NEW: Tell the database to save the USER'S question!
+    // Tell the database to save the USER'S question!
     await persistMessage(sid, 'user', userQuery);
+
+    const userEmail = localStorage.getItem('userEmail') || 'unknown_user@aarviencon.com';
 
     try {
       const response = await axios.post(`${API_BASE_URL}/chat/`, { 
         query: userQuery,
         context: activeTender || {},
-        full_text: activeTender?.full_text || "" 
+        full_text: activeTender?.full_text || "",
+        user_email: userEmail // ✅ NEW: Sent for Token Cost Metering
       });
       
       setMessages(prev => [...prev, { type: 'ai', text: response.data.reply }]);
@@ -234,7 +238,7 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
             {progress ? (
               <div className="w-full max-w-2xl bg-indigo-50 border border-indigo-100 p-3 sm:p-5 rounded-xl sm:rounded-2xl flex flex-col md:flex-row items-center justify-between gap-3 sm:gap-4 shadow-sm animate-pulse ml-0 sm:ml-10 md:ml-12">
                 <div className="flex items-center gap-2 sm:gap-3">
-                  <Loader2 className="animate-spin text-indigo-600 shrink-0" size={18} className="sm:w-[20px] sm:h-[20px]" />
+                  <Loader2 className="animate-spin text-indigo-600 shrink-0" size={18} />
                   <span className="text-indigo-900 font-bold text-xs sm:text-sm tracking-wide uppercase text-center sm:text-left">AI Engine Scanning Document...</span>
                 </div>
                 <div className="flex-1 w-full mx-0 sm:mx-4">

@@ -100,14 +100,6 @@ def normalize_client_name(extracted_name):
         
     name = str(extracted_name).upper().strip()
     
-
-def normalize_client_name(extracted_name):
-    """Translates full company names into core acronyms to group joint ventures."""
-    if not extracted_name or extracted_name == "Not Specified":
-        return extracted_name
-        
-    name = str(extracted_name).upper().strip()
-    
     # Existing rules
     if "HINDUSTAN PETROLEUM" in name:
         return "HPCL"
@@ -227,11 +219,11 @@ def fetch_client_intelligence(client_name: str):
                     medal = medals[i] if i < 3 else f"• {i+1}."
                     
                     comp_text += f"{medal} **{comp_name}**\n"
-                    comp_text += f"  - Encountered: {data['encounters']} times | Has taken L1 Rank: {data['wins']} times\n"
+                    comp_text += f"   - Encountered: {data['encounters']} times | Has taken L1 Rank: {data['wins']} times\n"
                     if avg_gap > 0:
-                        comp_text += f"  - Average Margin Disadvantage: We typically lose to them by a gap of {avg_gap}%\n\n"
+                        comp_text += f"   - Average Margin Disadvantage: We typically lose to them by a gap of {avg_gap}%\n\n"
                     else:
-                        comp_text += "  - Average Margin Disadvantage: Baseline benchmark maker (0.00% variance)\n\n"
+                        comp_text += "   - Average Margin Disadvantage: Baseline benchmark maker (0.00% variance)\n\n"
 
             # Add Unstructured Comments (if any exist)
             if raw_comments:
@@ -286,8 +278,15 @@ def ensure_ui_schema(ai_data: dict, logic_data: dict, intel_data: dict, error_ms
     return template
 
 def generate_tender_summary(tender_text: str = None):
+    # ✅ NEW: Initialize token counters for tracking
+    total_input_tokens = 0
+    total_output_tokens = 0
+
     if not tender_text:
-        return ensure_ui_schema({}, {}, {}, "Empty tender document provided.")
+        return {
+            "ui_data": ensure_ui_schema({}, {}, {}, "Empty tender document provided."),
+            "input_tokens": 0, "output_tokens": 0, "tender_no": "N/A"
+        }
 
     model = get_model()
     kb_data = get_knowledge_base()
@@ -332,6 +331,11 @@ def generate_tender_summary(tender_text: str = None):
     try:
         response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
         
+        # ✅ NEW: Capture Pass 1 Token Footprint
+        if hasattr(response, 'usage_metadata') and response.usage_metadata:
+            total_input_tokens += getattr(response.usage_metadata, 'prompt_token_count', 0)
+            total_output_tokens += getattr(response.usage_metadata, 'candidates_token_count', 0)
+        
         try:
             ai_extracted_data = json.loads(response.text)
         except json.JSONDecodeError:
@@ -363,7 +367,13 @@ def generate_tender_summary(tender_text: str = None):
             """
             try:
                 # Ask Gemini to parse the messy text, find the Top 3, AND write the strategy
-                ai_strategy_response = model.generate_content(strategy_prompt, generation_config={"response_mime_type": "application/json"}).text
+                ai_strat_obj = model.generate_content(strategy_prompt, generation_config={"response_mime_type": "application/json"})
+                ai_strategy_response = ai_strat_obj.text
+                
+                # ✅ NEW: Capture Pass 2 Token Footprint
+                if hasattr(ai_strat_obj, 'usage_metadata') and ai_strat_obj.usage_metadata:
+                    total_input_tokens += getattr(ai_strat_obj.usage_metadata, 'prompt_token_count', 0)
+                    total_output_tokens += getattr(ai_strat_obj.usage_metadata, 'candidates_token_count', 0)
                 
                 try:
                     strategy_json = json.loads(ai_strategy_response)
@@ -387,16 +397,38 @@ def generate_tender_summary(tender_text: str = None):
                 print(f"Failed to generate competitive strategy: {e}")
                 pass
 
-        # Pass all three data sources (AI + Logic + DB) to the UI formatter
-        return ensure_ui_schema(ai_extracted_data, logic_decisions, historical_intel)
+        # ✅ NEW: Package everything together including token counts for main.py to log
+        final_ui_data = ensure_ui_schema(ai_extracted_data, logic_decisions, historical_intel)
+        return {
+            "ui_data": final_ui_data,
+            "input_tokens": total_input_tokens,
+            "output_tokens": total_output_tokens,
+            "tender_no": ai_extracted_data.get("tender_no", "N/A")
+        }
         
     except Exception as e:
-        return ensure_ui_schema({}, {}, {}, error_msg=str(e))
+        return {
+            "ui_data": ensure_ui_schema({}, {}, {}, error_msg=str(e)),
+            "input_tokens": total_input_tokens,
+            "output_tokens": total_output_tokens,
+            "tender_no": "N/A"
+        }
 
 def chat_with_tender(query: str, context: dict, full_text: str = ""):
     model = get_model()
     prompt = f"Context: {json.dumps(context)}\nFull Doc: {full_text[:50000]}\nQuery: {query}\n\nStrictly answer based on Full Doc using Markdown bullets."
-    return model.generate_content(prompt).text  
+    
+    response = model.generate_content(prompt)
+    
+    # ✅ NEW: Capture chat tokens
+    in_tokens = getattr(response.usage_metadata, 'prompt_token_count', 0) if hasattr(response, 'usage_metadata') and response.usage_metadata else 0
+    out_tokens = getattr(response.usage_metadata, 'candidates_token_count', 0) if hasattr(response, 'usage_metadata') and response.usage_metadata else 0
+    
+    return {
+        "reply": response.text,
+        "input_tokens": in_tokens,
+        "output_tokens": out_tokens
+    }
 
 def generate_chat_title(first_message: str) -> str:
     if not first_message:

@@ -5,9 +5,10 @@ import MainDashboard from './pages/MainDashboard';
 import AnalyticsDashboard from './pages/AnalyticsDashboard';
 import NotificationPage from './pages/NotificationPage';
 import SharedChat from './pages/SharedChat';
-
-// IMPORTANT: Import the Landing Page
 import LandingPage from './pages/LandingPage'; 
+
+// --- 🆕 IMPORT THE NEW ADMIN WORKSPACE ---
+import AdminControlWorkspace from './pages/AdminControlWorkspace'; 
 
 const Layout = ({ children }) => {
   const location = useLocation();
@@ -36,7 +37,7 @@ function App() {
     const role = localStorage.getItem('userRole');
     if (role && role !== 'undefined' && role !== 'null') {
       setIsAuthenticated(true);
-      setUserRole(role);
+      setUserRole(role.toLowerCase()); // Ensure lowercase for strict matching
     }
   }, []);
 
@@ -44,7 +45,7 @@ function App() {
   // LandingPage calls this when the backend says "Success"
   const handleLoginSuccess = (role) => {
     setIsAuthenticated(true);
-    setUserRole(role);
+    setUserRole(role.toLowerCase());
   };
 
   // --- 4. THE GATE ---
@@ -74,6 +75,16 @@ function App() {
             element={
               userRole === 'admin' 
                 ? <AnalyticsDashboard /> 
+                : <Navigate to="/" replace /> 
+            } 
+          />
+
+          {/* 🆕 Protected Admin Workspace Route */}
+          <Route 
+            path="/admin-control" 
+            element={
+              userRole === 'admin' 
+                ? <AdminControlWorkspace /> 
                 : <Navigate to="/" replace /> 
             } 
           />

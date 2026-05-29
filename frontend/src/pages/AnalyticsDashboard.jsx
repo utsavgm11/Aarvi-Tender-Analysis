@@ -13,7 +13,7 @@ import {
 // --- CHANGED: Dynamic API routing ---
 // This automatically uses localhost when you are coding, and your live Vercel URL when hosted.
 // ✅ Constant: Always talk to the cloud backend
-const API_BASE_URL = import.meta.env.VITE_API_URL || "https://aarvi-tender-api.onrender.com";// ⚠️ REPLACE THIS WITH YOUR ACTUAL LIVE BACKEND LINK
+const API_BASE_URL = import.meta.env.VITE_API_URL || "https://attract-appeals-recorded-able.trycloudflare.com";// ⚠️ REPLACE THIS WITH YOUR ACTUAL LIVE BACKEND LINK
 
 const AnalyticsDashboard = ({ onBack }) => {
   const [tenders, setTenders] = useState([]);

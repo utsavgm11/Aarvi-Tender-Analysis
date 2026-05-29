@@ -10,7 +10,7 @@ const LandingPage = ({ onLoginSuccess }) => {
 
   // This tells the app: Use the Render URL from Vercel, 
   // but fall back to your laptop if the variable isn't found.
-  const API_BASE_URL = import.meta.env.VITE_API_URL || "https://aarvi-tender-api.onrender.com";
+  const API_BASE_URL = import.meta.env.VITE_API_URL || "https://attract-appeals-recorded-able.trycloudflare.com";
   
   const handleAuth = async (e) => {
     e.preventDefault();

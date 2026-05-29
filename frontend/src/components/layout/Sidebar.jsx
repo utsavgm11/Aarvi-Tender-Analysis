@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { 
   LayoutGrid, FileText, BarChart2, X, Plus, 
-  MessageSquare, Edit3, Share2, Trash2, Search, LogOut
+  MessageSquare, Edit3, Share2, Trash2, Search, LogOut, Shield 
 } from 'lucide-react';
 
 // --- Sub-component for individual chat items ---
@@ -96,7 +96,7 @@ const ChatItem = ({ chat, currentSessionId, onSelect, onRename, onDelete }) => {
   );
 };
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "https://aarvi-tender-api.onrender.com";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "https://attract-appeals-recorded-able.trycloudflare.com";
 
 // --- Main Sidebar Component ---
 const Sidebar = ({ isOpen, onClose, activeTab, setActiveTab, currentSessionId, onSessionSelect }) => {
@@ -223,6 +223,18 @@ const Sidebar = ({ isOpen, onClose, activeTab, setActiveTab, currentSessionId, o
                   <BarChart2 size={18} /> Analytics Dashboard
                 </button>
               </>
+            )}
+
+            {/* 🆕 ADMIN ONLY: Workspace Button */}
+            {userRole === 'admin' && (
+              <button 
+                onClick={() => { setActiveTab('admin-control'); if (window.innerWidth < 1024) onClose(); }} 
+                className={`flex items-center gap-2 sm:gap-3 w-full p-2.5 sm:p-3 rounded-xl text-sm sm:text-base font-bold transition-all ${
+                  activeTab === 'admin-control' ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20' : 'hover:bg-slate-800 text-amber-500/70 hover:text-amber-400'
+                }`}
+              >
+                <Shield size={18} /> Admin Control
+              </button>
             )}
           </div>
 
