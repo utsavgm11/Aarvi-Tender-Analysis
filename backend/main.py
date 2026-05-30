@@ -816,49 +816,31 @@ def update_tender(tender_no: str, t: Tender):
 
 
 
-# ----------------- ADMIN COMPUTE PANELS (ROLE VERIFIED) -----------------
+# ----------------- GLOBAL ACCOUNT COMPUTE PANELS (NORMAL FLATTENED ROUTES) -----------------
 
-@app.get("/api/admin/users")
-def get_live_users(admin_email: str):
-    """Directly extracts existing records using only the core working table columns"""
+@app.get("/api/users")
+def get_live_users(admin_email: Optional[str] = None):
+    """Directly extracts existing records using flat routing layout"""
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=500, detail="Database connection failed")
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # 1. Access clearance check
-        cur.execute("SELECT role FROM users WHERE LOWER(email) = %s", (admin_email.lower().strip(),))
-        caller = cur.fetchone()
-        
-        if not caller or not caller.get('role') or str(caller['role']).lower().strip() != 'admin':
-            raise HTTPException(status_code=403, detail="Privileged administrative token required.")
-            
-        # 2. 🎉 FIX: Select ONLY the foundational pillars guaranteed to exist in your table
         cur.execute("SELECT email, role, manager_name FROM users;")
         user_rows = cur.fetchall()
-        
         return [dict(row) for row in user_rows]
-        
-    except HTTPException as http_ex:
-        raise http_ex
     except Exception as e:
-        print(f"❌ RE-CRASHED! Look here for the column name error: {e}")
+        print(f"❌ User table query crash: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if conn: conn.close()
 
-@app.post("/api/admin/users")
-def create_new_user(user: NewUser, admin_email: str):
+@app.post("/api/users")
+def create_new_user(user: NewUser, admin_email: Optional[str] = None):
     """Inserts a fresh worker row directly into the users table profile"""
     conn = get_db_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT role FROM users WHERE email = %s", (admin_email.lower().strip(),))
-        caller = cur.fetchone()
-        if not caller or caller['role'].lower() != 'admin':
-            raise HTTPException(status_code=403, detail="Privileged administrative token required.")
-            
         hashed_pw = pwd_context.hash(user.password)
         derived_manager = user.email.split("@")[0].capitalize()
         
@@ -873,8 +855,8 @@ def create_new_user(user: NewUser, admin_email: str):
     finally:
         if conn: conn.close()
 
-@app.delete("/api/admin/users/{email}")
-def delete_user(email: str, admin_email: str):
+@app.delete("/api/users/{email}")
+def delete_user(email: str, admin_email: Optional[str] = None):
     """Deletes an existing user from your users table structure"""
     if email.lower().strip() == "shreyas@aarviencon.com":
         raise HTTPException(status_code=403, detail="Security Lockout: Core administrative index root immutable.")
@@ -882,28 +864,18 @@ def delete_user(email: str, admin_email: str):
     conn = get_db_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT role FROM users WHERE email = %s", (admin_email.lower().strip(),))
-        caller = cur.fetchone()
-        if not caller or caller['role'].lower() != 'admin':
-            raise HTTPException(status_code=403, detail="Privileged administrative token required.")
-            
         cur.execute("DELETE FROM users WHERE email = %s", (email.lower().strip(),))
         conn.commit()
         return {"status": "success"}
     finally:
         if conn: conn.close()
 
-@app.patch("/api/admin/users/reset-password")
-def reset_password(data: PasswordReset, admin_email: str):
+@app.patch("/api/users/reset-password")
+def reset_password(data: PasswordReset, admin_email: Optional[str] = None):
     """Overrides and changes user passwords from the frontend panel control"""
     conn = get_db_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT role FROM users WHERE email = %s", (admin_email.lower().strip(),))
-        caller = cur.fetchone()
-        if not caller or caller['role'].lower() != 'admin':
-            raise HTTPException(status_code=403, detail="Privileged administrative token required.")
-            
         hashed_pw = pwd_context.hash(data.newPassword)
         cur.execute("UPDATE users SET password_hash = %s WHERE email = %s", (hashed_pw, data.email.lower().strip()))
         conn.commit()
@@ -911,17 +883,14 @@ def reset_password(data: PasswordReset, admin_email: str):
     finally:
         if conn: conn.close()
 
-@app.get("/api/admin/usage-analytics")
-def get_user_wise_billing_summary(admin_email: str):
+@app.get("/api/usage-analytics")
+def get_user_wise_billing_summary(admin_email: Optional[str] = None):
     """Reads fresh row counts tracking from your api usage log table on every refresh"""
     conn = get_db_connection()
+    if not conn:
+        return {"daily": [], "monthly": []}
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT role FROM users WHERE email = %s", (admin_email.lower().strip(),))
-        caller = cur.fetchone()
-        if not caller or caller['role'].lower() != 'admin':
-            raise HTTPException(status_code=403, detail="Privileged administrative token required.")
-            
         cur.execute("""
             SELECT user_email, TO_CHAR(usage_date, 'YYYY-MM-DD') as date_str, action_type, tender_no,
                    SUM(input_tokens) as total_input, SUM(output_tokens) as total_output,

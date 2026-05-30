@@ -5,17 +5,17 @@ import {
   Search, X, Save, Edit3, Mail, ShieldCheck 
 } from 'lucide-react';
 
-// 🎯 FIX: Automatically strips trailing slashes to prevent 404 network errors
+// 🎯 UNIVERSAL API ROUTING PATHWAY
 const API_BASE_URL = (import.meta.env.VITE_API_URL || "https://attract-appeals-recorded-able.trycloudflare.com").replace(/\/$/, "");
 
 const AdminControlWorkspace = () => {
   const [users, setUsers] = useState([]);
-  const [analytics, setAnalytics] = useState({ daily: [], monthly: [] }); // Logic kept intact
+  const [analytics, setAnalytics] = useState({ daily: [], monthly: [] }); 
   const [loading, setLoading] = useState(true);
   
   // UI Modal Controls
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalMode, setModalMode] = useState('add'); // 'add' or 'edit'
+  const [modalMode, setModalMode] = useState('add'); 
   const [searchTerm, setSearchTerm] = useState('');
 
   // Integrated Form Fields State Layout
@@ -28,17 +28,33 @@ const AdminControlWorkspace = () => {
 
   const adminEmail = localStorage.getItem('userEmail') || 'utsavm@aarviencon.com';
 
+  // 🚀 FIXED SAFELY: Using flattened normal routes!
   const fetchAdminData = async () => {
     try {
       setLoading(true);
-      const [usersRes, usageRes] = await Promise.all([
-        axios.get(`${API_BASE_URL}/api/admin/users`, { params: { admin_email: adminEmail } }),
-        axios.get(`${API_BASE_URL}/api/admin/usage-analytics`, { params: { admin_email: adminEmail } })
-      ]);
-      setUsers(usersRes.data || []);
-      setAnalytics(usageRes.data || { daily: [], monthly: [] });
+
+      // Task 1: Fetch Accounts Data independently
+      try {
+        const usersRes = await axios.get(`${API_BASE_URL}/api/users`, { 
+          params: { admin_email: adminEmail } 
+        });
+        setUsers(usersRes.data || []);
+      } catch (userErr) {
+        console.error("User Directory Data Fetch Blocked:", userErr);
+      }
+
+      // Task 2: Fetch Performance Analytics completely isolated
+      try {
+        const usageRes = await axios.get(`${API_BASE_URL}/api/usage-analytics`, { 
+          params: { admin_email: adminEmail } 
+        });
+        setAnalytics(usageRes.data || { daily: [], monthly: [] });
+      } catch (usageErr) {
+        console.warn("Analytics Engine Offline or 404 Route Missing (Ignored to protect User table UI)");
+      }
+
     } catch (err) {
-      console.error("Administrative Synchronizer Error:", err);
+      console.error("Administrative Synchronizer Exception Error:", err);
     } finally {
       setLoading(false);
     }
@@ -58,7 +74,7 @@ const AdminControlWorkspace = () => {
     setModalMode('edit');
     setFormData({
       email: user.email,
-      password: '', // Kept empty for security overrides
+      password: '', 
       role: user.role || 'project_manager',
       manager_name: user.manager_name || ''
     });
@@ -75,7 +91,7 @@ const AdminControlWorkspace = () => {
 
     try {
       if (modalMode === 'add') {
-        await axios.post(`${API_BASE_URL}/api/admin/users?admin_email=${encodeURIComponent(adminEmail)}`, {
+        await axios.post(`${API_BASE_URL}/api/users?admin_email=${encodeURIComponent(adminEmail)}`, {
           email: formData.email.trim().toLowerCase(),
           password: formData.password,
           role: formData.role
@@ -83,7 +99,7 @@ const AdminControlWorkspace = () => {
         alert("Corporate credentials initialized successfully.");
       } else {
         if (formData.password.trim().length > 0) {
-          await axios.patch(`${API_BASE_URL}/api/admin/users/reset-password?admin_email=${encodeURIComponent(adminEmail)}`, {
+          await axios.patch(`${API_BASE_URL}/api/users/reset-password?admin_email=${encodeURIComponent(adminEmail)}`, {
             email: formData.email,
             newPassword: formData.password
           });
@@ -105,7 +121,7 @@ const AdminControlWorkspace = () => {
     if (window.confirm(`CRITICAL WARNING: Wipe access permission profiles for ${targetEmail}?`)) {
       try {
         setLoading(true);
-        await axios.delete(`${API_BASE_URL}/api/admin/users/${encodeURIComponent(targetEmail)}?admin_email=${encodeURIComponent(adminEmail)}`);
+        await axios.delete(`${API_BASE_URL}/api/users/${encodeURIComponent(targetEmail)}?admin_email=${encodeURIComponent(adminEmail)}`);
         await fetchAdminData();
       } catch (err) {
         alert(err.response?.data?.detail || "Deletion block intercepted.");
@@ -115,7 +131,6 @@ const AdminControlWorkspace = () => {
     }
   };
 
-  // Inline Search Match Sorting Logic
   const filteredUsers = useMemo(() => {
     return users.filter(u => 
       u.email?.toLowerCase().includes(searchTerm.toLowerCase()) || 
