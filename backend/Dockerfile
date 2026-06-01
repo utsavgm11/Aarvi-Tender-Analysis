@@ -1,28 +1,33 @@
 FROM python:3.10-slim
 
-# 1. Install system-level binaries required for Pytesseract and Pdf2image
+# 1. Install system-level binaries required for Pytesseract, Pdf2image, and Docling
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     tesseract-ocr \
     poppler-utils \
     libglib2.0-0 \
+    libgomp1 \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 # 2. Copy requirements first (better caching layer)
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
-# 3. Copy everything else
+# 3. Upgrade pip and install requirements (including docling)
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# 4. Copy everything else
 COPY . .
 
-# 4. Set the PYTHONPATH so Python can find your modules seamlessly
+# 5. Set the PYTHONPATH so Python can find your modules seamlessly
 ENV PYTHONPATH=/app/backend
-ENV PORT=10000
+ENV PORT=8001
 
-# 5. Move into the backend folder where main.py resides
+# 6. Move into the backend folder where main.py resides
 WORKDIR /app/backend
 
-# 6. Start the API app with detailed debugging flags to catch Render network errors
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000", "--log-level", "debug"]
+# 7. Start the API app with your specific company production port
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "4", "--log-level", "debug"]

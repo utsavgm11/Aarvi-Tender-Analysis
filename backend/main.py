@@ -68,35 +68,32 @@ def get_db_connection():
 def log_system_ai_usage(user_email: str, action_type: str, tender_no: str, input_tokens: int, output_tokens: int, estimated_cost: float):
     conn = get_db_connection()
     if not conn:
+        print("❌ DB LOGGING FAILED: Could not establish database connection.")
         return
     try:
-        # 1. Force autocommit to prevent PostgreSQL from rolling back rows silently
         conn.autocommit = True
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # 2. Automatically generate a unique string ID for your first column
-        unique_log_id = str(uuid.uuid4())
+        print(f"⚙️ [DB DEBUG] Attempting insert into table for User: {user_email}, Tender: {tender_no}")
         
-        # 3. Execute the insert matching the exact order of columns in your table
+        # 🎯 FIX: We removed 'id' from the INSERT. PostgreSQL will auto-increment its own integer id!
         cur.execute("""
-            INSERT INTO ai_usage_logs (id, user_email, action_type, tender_no, input_tokens, output_tokens, estimated_cost_inr, usage_date)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_DATE);
+            INSERT INTO ai_usage_logs (user_email, action_type, tender_no, input_tokens, output_tokens, estimated_cost_inr, usage_date)
+            VALUES (%s, %s, %s, %s, %s, %s, CURRENT_DATE);
         """, (
-            unique_log_id,              # Fills the first 'id' column
-            user_email.lower().strip(),  # user_email
-            action_type,                 # action_type
-            tender_no or 'N/A',          # tender_no
-            int(input_tokens or 0),      # input_tokens
-            int(output_tokens or 0),     # output_tokens
-            float(estimated_cost or 0.0) # estimated_cost_inr
+            user_email.lower().strip(),  
+            action_type,                 
+            tender_no or 'N/A',          
+            int(input_tokens or 0),      
+            int(output_tokens or 0),     
+            float(estimated_cost or 0.0) 
         ))
+        print("✅ [DB DEBUG] SUCCESS! Insertion statement completed cleanly. Row added to database!")
         
     except Exception as e:
-        # Failsafe print message (will stay hidden if terminal is closed)
-        print(f"Database insertion failed: {e}")
+        print(f"❌ [DB CRITICAL FAILURE] Database insertion rejected: {e}")
     finally:
         if conn: conn.close()
-
 # ----------------- MODELS -----------------
 
 # Auth Models
@@ -885,33 +882,33 @@ def reset_password(data: PasswordReset, admin_email: Optional[str] = None):
 
 @app.get("/api/usage-analytics")
 def get_user_wise_billing_summary(admin_email: Optional[str] = None):
-    """Reads fresh row counts tracking from your api usage log table on every refresh"""
+    """Exposes the raw chronological timeline of AI usage logs for dynamic frontend filtering"""
     conn = get_db_connection()
     if not conn:
-        return {"daily": [], "monthly": []}
+        return {"logs": []}
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Select the raw rows cleanly without pre-grouping them
         cur.execute("""
-            SELECT user_email, TO_CHAR(usage_date, 'YYYY-MM-DD') as date_str, action_type, tender_no,
-                   SUM(input_tokens) as total_input, SUM(output_tokens) as total_output,
-                   ROUND(SUM(estimated_cost_inr)::numeric, 4) as total_cost_inr
+            SELECT id, 
+                   user_email, 
+                   action_type, 
+                   tender_no, 
+                   input_tokens, 
+                   output_tokens, 
+                   ROUND(estimated_cost_inr::numeric, 4) as cost_inr,
+                   usage_date
             FROM ai_usage_logs
-            GROUP BY user_email, usage_date, action_type, tender_no
             ORDER BY usage_date DESC;
         """)
-        daily_analytics = cur.fetchall()
+        raw_logs = cur.fetchall()
         
-        cur.execute("""
-            SELECT user_email, TO_CHAR(usage_date, 'YYYY-MM') as month_str,
-                   ROUND(SUM(estimated_cost_inr)::numeric, 4) as monthly_cost_inr
-            FROM ai_usage_logs
-            GROUP BY user_email, TO_CHAR(usage_date, 'YYYY-MM')
-            ORDER BY month_str DESC;
-        """)
-        monthly_analytics = cur.fetchall()
-        return {"daily": daily_analytics or [], "monthly": monthly_analytics or []}
-    except Exception:
-        return {"daily": [], "monthly": []}
+        # Return a single unmanipulated timeline array to the frontend
+        return {"logs": [dict(row) for row in raw_logs] if raw_logs else []}
+    except Exception as e:
+        print(f"❌ Analytics fetch exception: {e}")
+        return {"logs": []}
     finally:
         if conn: conn.close()
 # ----------------- MAIN -----------------
