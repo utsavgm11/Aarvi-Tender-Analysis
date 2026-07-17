@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form , BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, EmailStr
@@ -23,9 +23,10 @@ from file_parser import extract_text_from_upload
 
 # ----------------- APP -----------------
 app = FastAPI()
-
+import asyncio
 # ----------------- LIVE OCR PROGRESS STORE -----------------
 progress_store = {}
+result_store = {}
 
 # ----------------- CORS (UPDATED FOR PRODUCTION) -----------------
 app.add_middleware(
@@ -189,31 +190,45 @@ async def health_check():
         "timestamp": date.today().isoformat()
     }
 
-# ----------------- OCR PROGRESS -----------------
+# ----------------- OCR PROGRESS & RESULT POLLING -----------------
 @app.get("/progress/{task_id}")
 async def get_progress(task_id: str):
+    # 1. Check if the AI has finished the background task
+    if task_id in result_store:
+        task_info = result_store[task_id]
+        if task_info["status"] == "completed":
+            data = task_info["data"]
+            del result_store[task_id] 
+            return {"status": "completed", "result": data}
+        elif task_info["status"] == "error":
+            return {"status": "error", "error": task_info["error"]}
+
+    # 2. If not finished, return current OCR page processing status
     return progress_store.get(task_id, {
         "current": 0,
-        "total": 1
+        "total": 1,
+        "status": "processing"
     })
 
-# ----------------- AI ANALYSIS -----------------
-@app.post("/analyze-tender")
-async def analyze_tender(
-    files: List[UploadFile] = File(...),
-    task_id: str = Form(...),
-    user_email: str = Form(...) 
-):
-    print(f"\n[DEBUG] Analysis Started for Task: {task_id} by User: {user_email}")
+# ----------------- BACKGROUND AI WORKER -----------------
+async def run_analysis_background(files_data: list, task_id: str, user_email: str):
+    """Runs completely in the background without holding the web connection hostage."""
     try:
+        import asyncio
+        from file_parser import extract_text_from_file, clean_extracted_text
+        
         combined_text = ""
-        for file in files:
-            tender_text = await extract_text_from_upload(file, task_id=task_id)
-            if tender_text:
-                combined_text += f"\n\n--- Document: {file.filename} ---\n{tender_text}\n"
+        for file_name, file_bytes in files_data:
+            # Run extraction in a background thread to prevent blocking FastAPI
+            raw_text = await asyncio.to_thread(extract_text_from_file, file_bytes, file_name, task_id)
+            cleaned_text = clean_extracted_text(raw_text)
+            
+            if cleaned_text:
+                combined_text += f"\n\n--- Document: {file_name} ---\n{cleaned_text}\n"
                 
         if not combined_text.strip():
-            raise HTTPException(status_code=400, detail="Could not extract text from uploaded files.")
+            result_store[task_id] = {"status": "error", "error": "Could not extract text from uploaded files."}
+            return
             
         # Fire the ai_service function
         result = generate_tender_summary(combined_text)
@@ -234,14 +249,46 @@ async def analyze_tender(
         # Log to postgres database cleanly
         log_system_ai_usage(user_email, "Tender Scan Analysis", t_no, in_tokens, out_tokens, computed_cost)
 
-        return {"aarvi_intelligence": ui_payload}
+        # Store the completed payload for the frontend to collect
+        result_store[task_id] = {"status": "completed", "data": {"aarvi_intelligence": ui_payload}}
 
+    except Exception as e:
+        print(f"❌ PIPELINE ERROR inside background worker: {e}")
+        result_store[task_id] = {"status": "error", "error": str(e)}
+    finally:
+        # Clean up OCR tracking
+        if task_id in progress_store:
+            del progress_store[task_id]
+
+# ----------------- AI ANALYSIS -----------------
+@app.post("/analyze-tender")
+async def analyze_tender(
+    background_tasks: BackgroundTasks,
+    files: List[UploadFile] = File(...),
+    task_id: str = Form(...),
+    user_email: str = Form(...) 
+):
+    print(f"\n[DEBUG] Queueing Task: {task_id} by User: {user_email}")
+    try:
+        # Read files into RAM instantly before the connection drops
+        files_data = []
+        for file in files:
+            file_bytes = await file.read()
+            files_data.append((file.filename, file_bytes))
+            
+        # Mark task as processing
+        result_store[task_id] = {"status": "processing"}
+        
+        # Hand off to the background worker
+        background_tasks.add_task(run_analysis_background, files_data, task_id, user_email)
+        
+        # INSTANT RETURN: Cloudflare/Vercel will never time out!
+        return {"status": "queued", "task_id": task_id}
+        
     except Exception as e:
         print(f"❌ PIPELINE ERROR inside analyze-tender: {e}")
         return {"error": str(e)}
-    finally:
-        if task_id in progress_store:
-            del progress_store[task_id]
+
 
 # ----------------- AUTH ROUTES -----------------
 @app.post("/signup")

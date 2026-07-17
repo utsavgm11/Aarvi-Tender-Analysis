@@ -7,7 +7,14 @@ from fastapi import UploadFile
 import pytesseract
 import os
 import shutil  
+import asyncio  # <-- ADDED to solve the FastAPI freezing issue
 from PIL import Image
+
+# --- STRICT CPU CONTROL FOR TESSERACT ---
+# <-- ADDED to prevent Tesseract from locking up all server CPU cores
+os.environ["OMP_THREAD_LIMIT"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 # --- ADVANCED EMBEDDED CONVERTERS ---
 try:
@@ -49,7 +56,8 @@ async def extract_text_from_upload(file: UploadFile, task_id: str = None) -> str
     print(f"\n--- [HYBRID START] Processing File: {file.filename} ---", flush=True)
     file_bytes = await file.read()
     
-    raw_text = extract_text_from_file(file_bytes, file.filename, task_id)
+    # <-- ADDED asyncio.to_thread to run the heavy extraction without freezing the server
+    raw_text = await asyncio.to_thread(extract_text_from_file, file_bytes, file.filename, task_id)
     cleaned_text = clean_extracted_text(raw_text)
     
     try:
@@ -135,15 +143,20 @@ def extract_text_from_file(file_bytes: bytes, filename: str, task_id: str = None
                     blocks = page.get_text("blocks")
                     extracted = "\n".join([b[4] for b in blocks if b[4].strip()])
                     
-                    if len(extracted.strip()) > 100 and DOCLING_AVAILABLE:
-                        try:
-                            page_result = docling_converter.convert(temp_pdf_path, page_numbers=[current_page])
-                            page_markdown = page_result.document.export_to_markdown()
-                            text += f"\n--- Page {current_page} (Docling Smart Markdown) ---\n{page_markdown}\n"
-                            print(f"  > Page {current_page}/{total_pages}: Docling Neural Extraction (Markdown Mode)", flush=True)
-                        except Exception:
+                    # <-- ADDED logic fix: Don't fall back to heavy OCR if digital text is found, even if Docling is missing
+                    if len(extracted.strip()) > 100:
+                        if DOCLING_AVAILABLE:
+                            try:
+                                page_result = docling_converter.convert(temp_pdf_path, page_numbers=[current_page])
+                                page_markdown = page_result.document.export_to_markdown()
+                                text += f"\n--- Page {current_page} (Docling Smart Markdown) ---\n{page_markdown}\n"
+                                print(f"  > Page {current_page}/{total_pages}: Docling Neural Extraction (Markdown Mode)", flush=True)
+                            except Exception:
+                                text += f"\n--- Page {current_page} ---\n{extracted}\n"
+                                print(f"  > Page {current_page}/{total_pages}: PyMuPDF Block Extraction (Digital Fallback)", flush=True)
+                        else:
                             text += f"\n--- Page {current_page} ---\n{extracted}\n"
-                            print(f"  > Page {current_page}/{total_pages}: PyMuPDF Block Extraction (Digital Fallback)", flush=True)
+                            print(f"  > Page {current_page}/{total_pages}: PyMuPDF Block Extraction (Native Mode)", flush=True)
                     else:
                         pix = page.get_pixmap(matrix=fitz.Matrix(1, 1))
                         img = Image.open(io.BytesIO(pix.tobytes("png")))

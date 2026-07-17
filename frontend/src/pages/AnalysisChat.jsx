@@ -113,48 +113,67 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
 
     const formData = new FormData();
     formData.append('task_id', taskId); // TASK ID FIRST
-    formData.append('user_email', userEmail); // ✅ NEW: Sent for Token Cost Metering
+    formData.append('user_email', userEmail); // Sent for Token Cost Metering
 
     for (let i = 0; i < files.length; i++) {
       formData.append('files', files[i]);
     }
 
-    // --- POLLING LOGIC ---
-    pollingInterval.current = setInterval(async () => {
-      try {
-        const res = await axios.get(`${API_BASE_URL}/progress/${taskId}`);
-        if (res.data && res.data.total > 0) {
-          setProgress(res.data);
-          if (res.data.current === res.data.total) {
-            clearInterval(pollingInterval.current);
-          }
-        }
-      } catch (err) {
-        // Silently handle 404s until backend starts the task
-      }
-    }, 1000);
-
     try {
-      const response = await axios.post(`${API_BASE_URL}/analyze-tender`, formData, {
+      // 1. Instantly queue the file on the server (Takes < 1 second, beats Vercel timeout)
+      const uploadRes = await axios.post(`${API_BASE_URL}/analyze-tender`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      
-      const tenderData = response.data.aarvi_intelligence;
-      if (tenderData) {
-        setActiveTender(tenderData);
-        setMessages(prev => [...prev, { type: 'ai', result: tenderData }]);
-        await persistMessage(sid, 'ai', tenderData);
+
+      if (uploadRes.data.error) {
+        throw new Error(uploadRes.data.error);
       }
-      window.dispatchEvent(new Event('refresh-sidebar'));
+
+      // 2. Start polling the progress endpoint every 3 seconds for the final AI data
+      pollingInterval.current = setInterval(async () => {
+        try {
+          const res = await axios.get(`${API_BASE_URL}/progress/${taskId}`);
+          
+          if (res.data.status === "completed") {
+            // Success! The background AI task is done.
+            clearInterval(pollingInterval.current);
+            const tenderData = res.data.result.aarvi_intelligence;
+            
+            if (tenderData) {
+              setActiveTender(tenderData);
+              setMessages(prev => [...prev, { type: 'ai', result: tenderData }]);
+              await persistMessage(sid, 'ai', tenderData);
+            }
+            window.dispatchEvent(new Event('refresh-sidebar'));
+            
+            // Cleanup UI
+            setIsLoading(false);
+            setProgress(null);
+            isOperationActive.current = false;
+            if (fileInputRef.current) fileInputRef.current.value = '';
+            
+          } else if (res.data.status === "error") {
+            // The background task failed
+            clearInterval(pollingInterval.current);
+            throw new Error(res.data.error);
+            
+          } else if (res.data.total > 0) {
+            // Still scanning pages - update the loading bar
+            setProgress({ current: res.data.current, total: res.data.total });
+          }
+        } catch (pollErr) {
+          // If the poll fails, log it but keep trying in case of temporary blip
+          console.log("Polling check missed, retrying next cycle...");
+        }
+      }, 3000); // Check every 3 seconds
+
     } catch (e) {
+      // Handles upload failures or background task crashes
       const errorText = `Analysis failed: ${e.response?.data?.detail || e.message}`;
       setMessages(prev => [...prev, { type: 'ai', text: errorText }]);
-    } finally {
-      // --- CLEANUP AND UNLOCK ---
       setIsLoading(false);
       setProgress(null);
-      isOperationActive.current = false; // RELEASE THE LOCK
-      clearInterval(pollingInterval.current);
+      isOperationActive.current = false;
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
