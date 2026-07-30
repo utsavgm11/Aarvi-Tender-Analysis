@@ -8,7 +8,7 @@ import html2pdf from 'html2pdf.js';
 import PrintableTenderReport from './PrintableTenderReport';
 
 // NEW WORD EXPORT IMPORTS
-import { htmlToDocx } from 'html-docx-js-typescript';
+import { asBlob } from 'html-docx-js-typescript';
 import { saveAs } from 'file-saver';
 
 // --- DATA CLEANER ---
@@ -116,11 +116,13 @@ const DecisionCard = ({ result, progress }) => {
       </html>
     `;
 
-    try {
-      const docxBuffer = await htmlToDocx(fullHtml, null, {
+   try {
+      // Changed to asBlob and removed the 'null' parameter
+      const docxBuffer = await asBlob(fullHtml, {
         orientation: 'portrait',
-        margins: { top: 720, right: 720, bottom: 720, left: 720 }, // 0.5 inch margins
+        margins: { top: 720, right: 720, bottom: 720, left: 720 }
       });
+      
       saveAs(docxBuffer, `Aarvi_Tender_Report_${d.tender_no !== "Not Specified" ? d.tender_no : "New"}.docx`);
     } catch (error) {
       console.error("Word generation failed:", error);
