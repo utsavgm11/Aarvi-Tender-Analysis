@@ -7,6 +7,10 @@ import {
 import html2pdf from 'html2pdf.js';
 import PrintableTenderReport from './PrintableTenderReport';
 
+// NEW WORD EXPORT IMPORTS
+import { htmlToDocx } from 'html-docx-js-typescript';
+import { saveAs } from 'file-saver';
+
 // --- DATA CLEANER ---
 const cleanText = (val) => {
   if (val === undefined || val === null || val === "" || val === "N/A" || val === "Not Specified") {
@@ -18,6 +22,7 @@ const cleanText = (val) => {
 const DecisionCard = ({ result, progress }) => {
   const data = result?.aarvi_intelligence || result || {};
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isDownloadingWord, setIsDownloadingWord] = useState(false);
   
   const d = {
     tender_no: cleanText(data.tender_no),
@@ -72,6 +77,58 @@ const DecisionCard = ({ result, progress }) => {
     html2pdf().set(opt).from(element).save().then(() => setIsDownloading(false));
   };
 
+  const handleDownloadWord = async () => {
+    setIsDownloadingWord(true);
+    // Target the exact same report we use for the PDF!
+    const reportElement = document.getElementById('printable-report'); 
+    
+    if (!reportElement) {
+      alert("Report content not found.");
+      setIsDownloadingWord(false);
+      return;
+    }
+
+    const clone = reportElement.cloneNode(true);
+
+    // Inject the exact CSS styling needed to make MS Word read your grid as a proper table
+    const fullHtml = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <style>
+            body { font-family: 'Calibri', 'Times New Roman', serif; font-size: 11pt; color: #000000; line-height: 1.3; }
+            h1 { font-size: 18pt; font-weight: bold; text-align: center; margin-bottom: 2pt; }
+            h2 { font-size: 13pt; font-weight: bold; text-align: center; text-transform: uppercase; margin-top: 2pt; }
+            h3 { font-size: 12pt; font-weight: bold; text-transform: uppercase; border-bottom: 1.5pt solid #000000; padding-bottom: 2pt; margin-top: 12pt; margin-bottom: 6pt; }
+            .grid-table { width: 100%; border-collapse: collapse; margin-bottom: 10pt; }
+            .grid-row { display: table-row; }
+            .grid-label { display: table-cell; width: 25%; background-color: #f2f2f2; font-weight: bold; padding: 6pt 8pt; border: 0.5pt solid #000000; vertical-align: top; }
+            .grid-value { display: table-cell; width: 75%; padding: 6pt 8pt; border: 0.5pt solid #000000; vertical-align: top; }
+            .font-bold, strong { font-weight: bold; }
+            .italic { font-style: italic; }
+            .text-center { text-align: center; }
+          </style>
+        </head>
+        <body>
+          ${clone.innerHTML}
+        </body>
+      </html>
+    `;
+
+    try {
+      const docxBuffer = await htmlToDocx(fullHtml, null, {
+        orientation: 'portrait',
+        margins: { top: 720, right: 720, bottom: 720, left: 720 }, // 0.5 inch margins
+      });
+      saveAs(docxBuffer, `Aarvi_Tender_Report_${d.tender_no !== "Not Specified" ? d.tender_no : "New"}.docx`);
+    } catch (error) {
+      console.error("Word generation failed:", error);
+    } finally {
+      setIsDownloadingWord(false);
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto my-4 sm:my-8 px-3 sm:px-6 lg:px-8 font-sans space-y-4 sm:space-y-8 relative overflow-hidden">
       
@@ -105,14 +162,28 @@ const DecisionCard = ({ result, progress }) => {
         </div>
         
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto mt-2 md:mt-0">
+          
+          {/* PDF DOWNLOAD BUTTON */}
           <button 
             onClick={handleDownloadPDF}
             disabled={isDownloading}
             className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-bold shadow-sm transition-all active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed text-sm h-[40px] w-full sm:w-auto"
           >
             {isDownloading ? <Loader2 className="animate-spin" size={16} /> : <Download size={16} />}
-            {isDownloading ? 'Generating...' : 'Download Report'}
+            {isDownloading ? 'PDF...' : 'PDF'}
           </button>
+
+          {/* NEW WORD DOWNLOAD BUTTON */}
+          <button 
+            onClick={handleDownloadWord}
+            disabled={isDownloadingWord}
+            className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold shadow-sm transition-all active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed text-sm h-[40px] w-full sm:w-auto"
+          >
+            {isDownloadingWord ? <Loader2 className="animate-spin" size={16} /> : <FileText size={16} />}
+            {isDownloadingWord ? 'Word...' : 'Word'}
+          </button>
+
+          {/* STATUS BADGE */}
           <div className={`px-4 py-2 rounded-lg font-bold text-sm border flex items-center justify-center gap-2 h-[40px] w-full sm:w-auto ${
             isGo ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
             isReview ? 'bg-amber-50 text-amber-700 border-amber-200' :
