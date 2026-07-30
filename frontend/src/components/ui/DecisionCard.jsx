@@ -97,17 +97,73 @@ const DecisionCard = ({ result, progress }) => {
         <head>
           <meta charset="utf-8">
           <style>
-            body { font-family: 'Calibri', 'Times New Roman', serif; font-size: 11pt; color: #000000; line-height: 1.3; }
-            h1 { font-size: 18pt; font-weight: bold; text-align: center; margin-bottom: 2pt; }
-            h2 { font-size: 13pt; font-weight: bold; text-align: center; text-transform: uppercase; margin-top: 2pt; }
-            h3 { font-size: 12pt; font-weight: bold; text-transform: uppercase; border-bottom: 1.5pt solid #000000; padding-bottom: 2pt; margin-top: 12pt; margin-bottom: 6pt; }
-            .grid-table { width: 100%; border-collapse: collapse; margin-bottom: 10pt; }
-            .grid-row { display: table-row; }
-            .grid-label { display: table-cell; width: 25%; background-color: #f2f2f2; font-weight: bold; padding: 6pt 8pt; border: 0.5pt solid #000000; vertical-align: top; }
-            .grid-value { display: table-cell; width: 75%; padding: 6pt 8pt; border: 0.5pt solid #000000; vertical-align: top; }
+            /* Base Document Settings */
+            body { 
+              font-family: 'Calibri', 'Times New Roman', serif; 
+              font-size: 10.5pt; 
+              color: #000000; 
+              line-height: 1.4; 
+            }
+            
+            /* Header Formatting (AARVI ENCON Title) */
+            h1 { font-size: 16pt; font-weight: bold; text-align: center; margin-bottom: 2pt; text-transform: uppercase; letter-spacing: 1pt; }
+            h2 { font-size: 12pt; font-weight: bold; text-align: center; text-transform: uppercase; margin-top: 2pt; border-top: 1pt solid #000; padding-top: 4pt; display: inline-block;}
+            
+            /* Section Headers (e.g., 1.0 PROJECT IDENTIFICATION) */
+            h3 { 
+              font-size: 11pt; 
+              font-weight: bold; 
+              text-transform: uppercase; 
+              border-bottom: 1.5pt solid #000000; 
+              padding-bottom: 3pt; 
+              margin-top: 16pt; 
+              margin-bottom: 6pt; 
+            }
+            
+            /* Main Grid Layout */
+            .grid-table { 
+              width: 100%; 
+              border-collapse: collapse; 
+              margin-bottom: 12pt; 
+              border: 1pt solid #000000;
+            }
+            .grid-row { 
+              display: table-row; 
+            }
+            
+            /* Left Column (Labels) */
+            .grid-label { 
+              display: table-cell; 
+              width: 25%; 
+              background-color: #f3f4f6; /* Light gray background to match PDF */
+              font-weight: bold; 
+              padding: 6pt 8pt; 
+              border: 1pt solid #000000; 
+              vertical-align: top; 
+              font-size: 10pt;
+            }
+            
+            /* Right Column (Values) */
+            .grid-value { 
+              display: table-cell; 
+              width: 75%; 
+              padding: 6pt 8pt; 
+              border: 1pt solid #000000; 
+              vertical-align: top; 
+              font-size: 10pt;
+            }
+
+            /* Formatting for Bullet Points and Bold Text */
             .font-bold, strong { font-weight: bold; }
             .italic { font-style: italic; }
             .text-center { text-align: center; }
+            
+            /* Footer Styling */
+            .text-[10px] { font-size: 8pt; }
+            .text-gray-500 { color: #6b7280; }
+            
+            /* Ensure bullet lists format nicely in the table cells */
+            div { margin-bottom: 4pt; }
           </style>
         </head>
         <body>
