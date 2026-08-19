@@ -2,25 +2,65 @@ import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
 import { 
   Target, Clock, CheckCircle, XCircle, FileText, 
-  Search, Plus, Edit3, X, Trash2, LayoutGrid, BarChart3, Save
+  Search, Plus, Edit3, X, Trash2, LayoutGrid, BarChart3, Save, Eye, Upload
 } from 'lucide-react';
 import PostBidForm from '../components/ui/PostBidForm'; 
+
+// 📊 Global Custom CSV Export Columns Definition
+const ALL_EXPORT_COLUMNS = [
+  { key: 'tender_no', label: 'Tender No' },
+  { key: 'name_of_client', label: 'Client Name' },
+  { key: 'project_manager', label: 'Project Manager' },
+  { key: 'description', label: 'Description' },
+  { key: 'tender_status', label: 'Status' },
+  { key: 'due_date', label: 'Due Date' },
+  { key: 'received_date', label: 'Received Date' },
+  { key: 'pre_bidding_date', label: 'Pre-Bidding Date' },
+  { key: 'financial_year', label: 'Financial Year' },
+  { key: 'location', label: 'Location' },
+  { key: 'tender_open_price', label: 'Tender Open Price' },
+  { key: 'quoted_value', label: 'Quoted Value' },
+  { key: 'price_status', label: 'Price Status' },
+  { key: 'emd', label: 'EMD Value' },
+  { key: 'emd_status', label: 'EMD Status' },
+  { key: 'tender_fee_status', label: 'Tender Fee Status' },
+  { key: 'docs_prepared_by', label: 'Docs Prepared By' },
+  { key: 'source', label: 'Source' },
+  { key: 'comments', label: 'Comments' },
+  { key: 'aarvi_rank', label: 'Aarvi Rank' },
+  { key: 'reason_for_loss', label: 'Reason for Loss' },
+  { key: 'post_bid_remarks', label: 'Post-Bid Remarks' },
+];
 
 const MasterDashboard = () => {
   const [tenders, setTenders] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedFY, setSelectedFY] = useState('All'); 
+  const [selectedStatus, setSelectedStatus] = useState('All'); 
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState('add');
   
-  // 🗂️ NEW: Active Tab State for the Edit Form Modal Panel
-  const [activeFormTab, setActiveFormTab] = useState('core'); // 'core' or 'loss_intel'
+  // 👁️ Summary View Modal State
+  const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
+  const [viewSummaryTender, setViewSummaryTender] = useState(null);
 
+  // 🗂️ Active Tab State for Edit Form
+  const [activeFormTab, setActiveFormTab] = useState('core');
+  
   // Post-Bid Intelligence States
   const [isPostBidModalOpen, setIsPostBidModalOpen] = useState(false);
   const [selectedTenderForPostBid, setSelectedTenderForPostBid] = useState(null);
   
+  // File Upload State
+  const [summaryFile, setSummaryFile] = useState(null);
+
+  // 📥 Custom CSV Export Modal States
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [selectedColumns, setSelectedColumns] = useState([
+    'tender_no', 'name_of_client', 'project_manager', 'description', 'due_date', 'tender_status'
+  ]);
+
   const [formData, setFormData] = useState({
     tender_no: '', name_of_client: '', tender_status: 'Pending', 
     received_date: '', due_date: '', location: '', 
@@ -28,7 +68,6 @@ const MasterDashboard = () => {
     project_manager: '', emd: '', emd_status: 'Pending', 
     tender_fee_status: 'Pending', price_status: 'Pending', source: '', 
     comments: '', docs_prepared_by: '', financial_year: '2023-2024', pre_bidding_date: '',
-    // 📊 Added matching post-bid schema keys directly into the main state data tree
     aarvi_rank: '', reason_for_loss: '', post_bid_remarks: '',
     competitors: [{ rank: 'L1', company: '', amount: '', percent_diff: '' }]
   });
@@ -44,7 +83,6 @@ const MasterDashboard = () => {
       if (userRole !== 'admin' && managerName && managerName !== 'undefined' && managerName !== 'null') {
         queryParams.manager = managerName;
       }
-
       const res = await axios.get(`${API_BASE_URL}/tenders`, { params: queryParams });
       setTenders(res.data);
     } catch (err) { console.error("Fetch Error:", err); }
@@ -60,7 +98,6 @@ const MasterDashboard = () => {
       setIsPostBidModalOpen(true);
       return; 
     }
-
     try {
       await axios.patch(`${API_BASE_URL}/tenders/${encodeURIComponent(tender_no)}/status`, { tender_status: newStatus });
       fetchTenders(); 
@@ -81,7 +118,8 @@ const MasterDashboard = () => {
 
   const openAddModal = () => {
     setModalMode('add');
-    setActiveFormTab('core'); // Reset tab view
+    setActiveFormTab('core');
+    setSummaryFile(null);
     setFormData({ 
       tender_no: '', name_of_client: '', tender_status: 'Pending', 
       received_date: '', due_date: '', location: '', 
@@ -97,13 +135,13 @@ const MasterDashboard = () => {
 
   const openEditModal = (tender) => {
     setModalMode('edit');
-    setActiveFormTab('core'); // Always open on Core details tab first
+    setActiveFormTab('core');
+    setSummaryFile(null);
     setFormData({
       ...tender,
       received_date: tender.received_date ? tender.received_date.split(' ')[0] : '',
       due_date: tender.due_date ? tender.due_date.split(' ')[0] : '', 
       pre_bidding_date: tender.pre_bidding_date ? tender.pre_bidding_date.split(' ')[0] : '',
-      // Map existing layout fields or fallback safely to blanks
       aarvi_rank: tender.aarvi_rank || '',
       reason_for_loss: tender.reason_for_loss || '',
       post_bid_remarks: tender.post_bid_remarks || '',
@@ -114,7 +152,11 @@ const MasterDashboard = () => {
     setIsModalOpen(true);
   };
 
-  // Automated Aarvi Tracking sync inside the inline array form
+  const openSummaryModal = (tender) => {
+    setViewSummaryTender(tender);
+    setIsSummaryModalOpen(true);
+  };
+
   useEffect(() => {
     if (formData.aarvi_rank && formData.aarvi_rank !== 'Disqualified' && formData.aarvi_rank !== 'L5+') {
       const exists = formData.competitors.some(c => c.rank === formData.aarvi_rank);
@@ -163,7 +205,6 @@ const MasterDashboard = () => {
   const handleSaveTender = async (e) => {
     e.preventDefault();
     
-    // Clean up numerical string arrays cleanly before shipping payload
     const formattedCompetitors = formData.competitors.map(c => ({
       rank: c.rank,
       company: c.company || "Unknown Competitor",
@@ -181,12 +222,29 @@ const MasterDashboard = () => {
 
     try {
       setLoading(true);
-      if (modalMode === 'add') {
-        await axios.post(`${API_BASE_URL}/tenders`, cleanedData);
+      
+      if (summaryFile) {
+        const payload = new FormData();
+        payload.append('summary_file', summaryFile);
+        payload.append('tender_data', JSON.stringify(cleanedData));
+        
+        const config = { headers: { 'Content-Type': 'multipart/form-data' } };
+        
+        if (modalMode === 'add') {
+          await axios.post(`${API_BASE_URL}/tenders-with-file`, payload, config);
+        } else {
+          await axios.put(`${API_BASE_URL}/tenders-with-file/${encodeURIComponent(formData.tender_no)}`, payload, config);
+        }
       } else {
-        await axios.put(`${API_BASE_URL}/tenders/${encodeURIComponent(formData.tender_no)}`, cleanedData);
+        if (modalMode === 'add') {
+          await axios.post(`${API_BASE_URL}/tenders`, cleanedData);
+        } else {
+          await axios.put(`${API_BASE_URL}/tenders/${encodeURIComponent(formData.tender_no)}`, cleanedData);
+        }
       }
+
       setIsModalOpen(false);
+      setSummaryFile(null);
       fetchTenders().finally(() => setLoading(false));
     } catch (err) {
       setLoading(false);
@@ -204,13 +262,6 @@ const MasterDashboard = () => {
         await fetchTenders(); 
       } catch (err) { alert("Delete failed: " + err.message); } finally { setLoading(false); }
     }
-  };
-
-  const handleDownload = () => {
-    const url = selectedFY === 'All' 
-      ? `${API_BASE_URL}/export-tenders` 
-      : `${API_BASE_URL}/export-tenders?fy=${selectedFY}`;
-    window.open(url, '_blank');
   };
 
   const today = useMemo(() => {
@@ -233,12 +284,14 @@ const MasterDashboard = () => {
     return ''; 
   };
 
+  // 🔍 Filter Logic (Client/Tender search + FY + Status Dropdown)
   const sortedTenders = useMemo(() => {
     const filtered = tenders.filter(t => {
       const matchesSearch = t.name_of_client?.toLowerCase().includes(searchTerm.toLowerCase()) || 
                             t.tender_no?.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesFY = selectedFY === 'All' || t.financial_year === selectedFY;
-      return matchesSearch && matchesFY;
+      const matchesStatus = selectedStatus === 'All' || t.tender_status === selectedStatus;
+      return matchesSearch && matchesFY && matchesStatus;
     });
 
     return filtered.sort((a, b) => {
@@ -251,7 +304,52 @@ const MasterDashboard = () => {
       if (isAActive && isBActive) return dateA - dateB;
       return dateB - dateA;
     });
-  }, [tenders, searchTerm, selectedFY, today]);
+  }, [tenders, searchTerm, selectedFY, selectedStatus, today]);
+
+  // 📥 CUSTOM EXPORT CSV LOGIC
+  const handleColumnToggle = (columnKey) => {
+    setSelectedColumns(prev => 
+      prev.includes(columnKey) ? prev.filter(k => k !== columnKey) : [...prev, columnKey]
+    );
+  };
+
+  const handleSelectAllColumns = () => setSelectedColumns(ALL_EXPORT_COLUMNS.map(c => c.key));
+  const handleClearAllColumns = () => setSelectedColumns([]);
+
+  const handleExportCustomCSV = () => {
+    if (selectedColumns.length === 0) {
+      alert("Please select at least one column to export.");
+      return;
+    }
+
+    const activeHeaders = ALL_EXPORT_COLUMNS.filter(c => selectedColumns.includes(c.key));
+    const headerRow = activeHeaders.map(c => `"${c.label}"`).join(',');
+
+    const dataRows = sortedTenders.map(row => {
+      return activeHeaders.map(col => {
+        let val = row[col.key];
+        if (val === null || val === undefined) val = '';
+        if (typeof val === 'string') {
+          val = val.replace(/"/g, '""'); // Escape inner double quotes
+        }
+        return `"${val}"`;
+      }).join(',');
+    });
+
+    const csvContent = [headerRow, ...dataRows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    
+    const link = document.createElement('a');
+    link.href = url;
+    const statusSuffix = selectedStatus !== 'All' ? `_${selectedStatus}` : '';
+    link.setAttribute('download', `Tender_Report${statusSuffix}_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    setIsExportModalOpen(false);
+  };
 
   const stats = useMemo(() => ({
     totalActive: tenders.filter(t => 
@@ -286,15 +384,17 @@ const MasterDashboard = () => {
       <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-4 mb-6">
         
         <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-stretch sm:items-center w-full lg:w-auto">
-          <div className="relative w-full sm:w-72 lg:w-96">
+          {/* Search Box */}
+          <div className="relative w-full sm:w-64 lg:w-80">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
             <input 
-              className="w-full pl-10 pr-4 py-2.5 sm:py-2 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm sm:text-base" 
+              className="w-full pl-10 pr-4 py-2.5 sm:py-2 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm sm:text-base bg-white" 
               placeholder="Search Client or Tender..." 
               onChange={(e) => setSearchTerm(e.target.value)} 
             />
           </div>
           
+          {/* FY Filter Dropdown */}
           <select 
             value={selectedFY} 
             onChange={(e) => setSelectedFY(e.target.value)}
@@ -304,27 +404,43 @@ const MasterDashboard = () => {
               <option key={fy} value={fy}>{fy === 'All' ? 'All Financial Years' : fy}</option>
             ))}
           </select>
+
+          {/* 🎯 Status Filter Dropdown */}
+          <select 
+            value={selectedStatus} 
+            onChange={(e) => setSelectedStatus(e.target.value)}
+            className="bg-white border border-slate-200 px-4 py-2.5 sm:py-2 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-semibold text-indigo-600 cursor-pointer text-sm sm:text-base w-full sm:w-auto"
+          >
+            <option value="All">All Statuses</option>
+            <option value="Pending">Pending</option>
+            <option value="Tender Quoted">Tender Quoted</option>
+            <option value="Tender Won">Tender Won</option>
+            <option value="Tender Lost">Tender Lost</option>
+            <option value="Tender Regret">Tender Regret</option>
+            <option value="Tender Cancelled">Tender Cancelled</option>
+          </select>
         </div>
 
         <div className="flex flex-row gap-2 sm:gap-3 w-full lg:w-auto">
           <button onClick={openAddModal} className="flex-1 lg:flex-none justify-center bg-emerald-600 hover:bg-emerald-700 transition-colors text-white px-4 sm:px-5 py-2.5 sm:py-2 rounded-xl sm:rounded-lg font-bold flex items-center gap-2 text-sm sm:text-base">
             <Plus size={16}/> <span className="hidden sm:inline">Add Tender</span><span className="sm:hidden">Add</span>
           </button>
-          <button onClick={handleDownload} className="flex-1 lg:flex-none justify-center bg-slate-800 hover:bg-slate-900 transition-colors text-white px-4 sm:px-5 py-2.5 sm:py-2 rounded-xl sm:rounded-lg font-bold flex items-center gap-2 text-sm sm:text-base">
+          <button onClick={() => setIsExportModalOpen(true)} className="flex-1 lg:flex-none justify-center bg-slate-800 hover:bg-slate-900 transition-colors text-white px-4 sm:px-5 py-2.5 sm:py-2 rounded-xl sm:rounded-lg font-bold flex items-center gap-2 text-sm sm:text-base">
             <FileText size={16} /> <span className="hidden sm:inline">Export CSV</span><span className="sm:hidden">Export</span>
           </button>
         </div>
       </div>
 
-      {/* 📋 Responsive Data Table Container */}
+      {/* 📋 Data Table Container */}
       <div className="bg-white rounded-xl sm:rounded-2xl border shadow-sm w-full">
-        {/* Added overflow-x-auto to make the table scroll horizontally on mobile */}
         <div className="overflow-x-auto custom-scrollbar">
-          <table className="w-full text-left min-w-[700px]">
+          <table className="w-full text-left min-w-[900px]">
             <thead className="bg-slate-900 text-white text-xs uppercase tracking-wider">
               <tr>
                 <th className="p-3 sm:p-4 whitespace-nowrap">Client</th>
                 <th className="p-3 sm:p-4 whitespace-nowrap">Tender No</th>
+                <th className="p-3 sm:p-4 whitespace-nowrap">Project Manager</th>
+                <th className="p-3 sm:p-4 whitespace-nowrap">Description</th>
                 <th className="p-3 sm:p-4 whitespace-nowrap">Due Date</th>
                 <th className="p-3 sm:p-4 whitespace-nowrap">Status</th>
                 <th className="p-3 sm:p-4 text-center whitespace-nowrap">Action</th>
@@ -333,13 +449,15 @@ const MasterDashboard = () => {
             <tbody>
               {sortedTenders.length === 0 ? (
                 <tr>
-                  <td colSpan="5" className="p-8 text-center text-slate-400 italic">No tenders match your search criteria.</td>
+                  <td colSpan="7" className="p-8 text-center text-slate-400 italic">No tenders match your search criteria.</td>
                 </tr>
               ) : (
                 sortedTenders.map((t) => (
                   <tr key={t.tender_no} className={`border-b text-xs sm:text-sm transition-all hover:bg-slate-50 ${getRowStyle(t.due_date)}`}>
-                    <td className="p-3 sm:p-4 font-bold text-slate-700 max-w-[150px] sm:max-w-[250px] truncate" title={t.name_of_client}>{t.name_of_client}</td>
+                    <td className="p-3 sm:p-4 font-bold text-slate-700 max-w-[150px] sm:max-w-[200px] truncate" title={t.name_of_client}>{t.name_of_client}</td>
                     <td className="p-3 sm:p-4 font-mono text-slate-500 whitespace-nowrap">{t.tender_no}</td>
+                    <td className="p-3 sm:p-4 font-medium text-slate-600 whitespace-nowrap">{t.project_manager || 'N/A'}</td>
+                    <td className="p-3 sm:p-4 text-slate-600 max-w-[180px] sm:max-w-[220px] truncate" title={t.description}>{t.description || 'N/A'}</td>
                     <td className="p-3 sm:p-4 font-bold whitespace-nowrap">{t.due_date ? new Date(t.due_date).toLocaleDateString() : 'N/A'}</td>
                     <td className="p-3 sm:p-4">
                       <select 
@@ -356,9 +474,22 @@ const MasterDashboard = () => {
                       </select>
                     </td>
                     <td className="p-3 sm:p-4 text-center">
-                      <button onClick={() => openEditModal(t)} className="p-1.5 sm:p-2 text-slate-400 hover:text-indigo-600 transition-colors">
-                        <Edit3 size={18} className="w-[16px] h-[16px] sm:w-[18px] sm:h-[18px]" />
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        <button 
+                          onClick={() => openSummaryModal(t)} 
+                          title="View Tender Summary"
+                          className="p-1.5 sm:p-2 text-slate-400 hover:text-indigo-600 transition-colors rounded-lg hover:bg-indigo-50"
+                        >
+                          <Eye size={18} className="w-[16px] h-[16px] sm:w-[18px] sm:h-[18px]" />
+                        </button>
+                        <button 
+                          onClick={() => openEditModal(t)} 
+                          title="Edit Tender Details"
+                          className="p-1.5 sm:p-2 text-slate-400 hover:text-indigo-600 transition-colors rounded-lg hover:bg-indigo-50"
+                        >
+                          <Edit3 size={18} className="w-[16px] h-[16px] sm:w-[18px] sm:h-[18px]" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -368,17 +499,16 @@ const MasterDashboard = () => {
         </div>
       </div>
 
-      {/* 👑 MASTER FORM CONTAINER PANEL */}
+      {/* 👑 MASTER FORM CONTAINER PANEL (ADD / EDIT) */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-2 sm:p-4 animate-in fade-in duration-200">
-          <div className="bg-white p-4 sm:p-6 md:p-8 rounded-[1.5rem] sm:rounded-[2rem] w-full max-w-5xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto shadow-2xl relative custom-scrollbar flex flex-col animate-in zoom-in-95 duration-200">
+          <div className="bg-white p-4 sm:p-6 md:p-8 rounded-[1.5rem] sm:rounded-[2rem] w-full max-w-5xl max-h-[95vh] sm:max-h-[90vh] overflow-y-auto shadow-2xl relative custom-scrollbar flex flex-col">
             <button onClick={() => setIsModalOpen(false)} className="absolute top-4 right-4 sm:top-6 sm:right-6 text-slate-400 hover:text-slate-800 transition-colors bg-white rounded-full sm:bg-transparent p-1 sm:p-0 z-10 shadow-sm sm:shadow-none"><X size={20} className="sm:w-[24px] sm:h-[24px]" /></button>
             
             <h2 className="text-xl sm:text-2xl font-black text-slate-800 mb-2 sm:mb-4 pr-8 shrink-0">
               {modalMode === 'add' ? 'Add New Tender' : 'Edit Tender Details'}
             </h2>
 
-            {/* 📑 DYNAMIC TAB SWITCHER HEADER HEADER */}
             {formData.tender_status === 'Tender Lost' && (
               <div className="flex flex-row border-b border-slate-100 mb-4 sm:mb-6 gap-1 sm:gap-2 shrink-0 overflow-x-auto custom-scrollbar">
                 <button
@@ -399,9 +529,7 @@ const MasterDashboard = () => {
             )}
 
             <form onSubmit={handleSaveTender} className="flex flex-col flex-1 min-h-0">
-              
               <div className="overflow-y-auto flex-1 custom-scrollbar pb-2">
-                {/* PAGE TAB 1: CORE DATA FORM PANEL */}
                 {activeFormTab === 'core' && (
                   <div className="space-y-4 sm:space-y-6 transition-all duration-200 pr-1">
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
@@ -422,7 +550,19 @@ const MasterDashboard = () => {
                       <SelectField label="EMD Status" name="emd_status" value={formData.emd_status} onChange={handleChange} options={['Pending', 'Submitted', 'Exempted', 'Returned']} />
                       <SelectField label="Tender Fee Status" name="tender_fee_status" value={formData.tender_fee_status} onChange={handleChange} options={['Pending', 'Paid', 'Exempted']} />
                       <InputField label="Source (Portal/Email)" name="source" value={formData.source} onChange={handleChange} />
+                      
+                      {/* 📄 Upload Tender Summary PDF/Word Field */}
+                      <div>
+                        <label className="block text-[10px] sm:text-[11px] uppercase font-bold text-slate-500 mb-1.5 sm:mb-2">Upload Tender Summary (PDF/Word)</label>
+                        <input 
+                          type="file" 
+                          accept=".pdf,.doc,.docx"
+                          onChange={(e) => setSummaryFile(e.target.files[0])}
+                          className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 cursor-pointer outline-none"
+                        />
+                      </div>
                     </div>
+
                     <div className="grid grid-cols-1 gap-4 sm:gap-6">
                       <div><label className="block text-[10px] sm:text-[11px] uppercase font-bold text-slate-500 mb-1.5 sm:mb-2">Description</label><textarea name="description" value={formData.description} onChange={handleChange} rows="2" className="w-full p-2.5 sm:p-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm sm:text-base"></textarea></div>
                       <div><label className="block text-[10px] sm:text-[11px] uppercase font-bold text-slate-500 mb-1.5 sm:mb-2">Comments</label><textarea name="comments" value={formData.comments} onChange={handleChange} rows="2" className="w-full p-2.5 sm:p-3 border border-slate-200 rounded-xl outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-sm sm:text-base"></textarea></div>
@@ -430,7 +570,7 @@ const MasterDashboard = () => {
                   </div>
                 )}
 
-                {/* 📊 PAGE TAB 2: SLIDING LEADERBOARD DATA MATRIX VIEW */}
+                {/* PAGE TAB 2: LOSS INTEL */}
                 {activeFormTab === 'loss_intel' && formData.tender_status === 'Tender Lost' && (
                   <div className="space-y-4 sm:space-y-6 transition-all duration-300 bg-slate-50/50 p-3 sm:p-6 rounded-xl sm:rounded-2xl border border-slate-100 pr-1 sm:pr-6">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
@@ -451,7 +591,6 @@ const MasterDashboard = () => {
                           <option value="Disqualified">Technically Disqualified</option>
                         </select>
                       </div>
-
                       <div>
                         <label className="block text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Primary Reason for Loss</label>
                         <select 
@@ -470,7 +609,6 @@ const MasterDashboard = () => {
                       </div>
                     </div>
 
-                    {/* Leaderboard Array Form Fields */}
                     <div>
                       <div className="flex justify-between items-center mb-2 sm:mb-3">
                         <label className="block text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider">Bidding Leaderboard Matrix</label>
@@ -482,7 +620,6 @@ const MasterDashboard = () => {
                           <Plus size={14} /> <span className="hidden sm:inline">Add Position Row</span><span className="sm:hidden">Add</span>
                         </button>
                       </div>
-
                       <div className="space-y-3 sm:space-y-2 pr-1">
                         {formData.competitors.map((row, index) => (
                           <div key={index} className="grid grid-cols-2 sm:grid-cols-12 gap-2 items-center bg-white p-3 sm:p-2 rounded-xl border border-slate-200/60">
@@ -499,7 +636,6 @@ const MasterDashboard = () => {
                                 <option value="L5">L5</option>
                               </select>
                             </div>
-
                             <div className="col-span-2 sm:col-span-4 order-3 sm:order-none">
                               <input
                                 type="text"
@@ -511,7 +647,6 @@ const MasterDashboard = () => {
                                 className="w-full p-2 sm:p-1.5 pl-3 sm:pl-2 border rounded-lg text-xs outline-none disabled:bg-indigo-50 disabled:text-indigo-800 disabled:font-bold"
                               />
                             </div>
-
                             <div className="col-span-1 sm:col-span-3 order-4 sm:order-none">
                               <input
                                 type="number"
@@ -521,7 +656,6 @@ const MasterDashboard = () => {
                                 className="w-full p-2 sm:p-1.5 border rounded-lg text-xs outline-none font-mono"
                               />
                             </div>
-
                             <div className="col-span-1 sm:col-span-2 order-5 sm:order-none">
                               <input
                                 type="number"
@@ -533,7 +667,6 @@ const MasterDashboard = () => {
                                 className="w-full p-2 sm:p-1.5 border rounded-lg text-xs outline-none font-mono disabled:bg-slate-100 disabled:text-slate-400"
                               />
                             </div>
-
                             <div className="col-span-1 sm:col-span-1 text-right sm:text-center order-2 sm:order-none flex justify-end">
                               <button
                                 type="button"
@@ -547,7 +680,6 @@ const MasterDashboard = () => {
                         ))}
                       </div>
                     </div>
-
                     <div>
                       <label className="block text-[10px] sm:text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 mt-2 sm:mt-0">Strategy Notes / Management Remarks</label>
                       <textarea
@@ -576,7 +708,6 @@ const MasterDashboard = () => {
                 ) : (
                   <div className="hidden sm:block order-1"></div>
                 )}
-
                 <div className="flex w-full sm:w-auto gap-2 sm:gap-3 order-1 sm:order-2">
                   <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 sm:flex-none px-4 sm:px-6 py-2.5 sm:py-3 font-bold text-slate-500 bg-slate-50 sm:bg-transparent hover:bg-slate-100 rounded-xl transition-colors text-sm sm:text-base">Cancel</button>
                   <button type="submit" disabled={loading} className="flex-[2] sm:flex-none justify-center px-4 sm:px-8 py-2.5 sm:py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-colors flex items-center gap-2 text-sm sm:text-base">
@@ -589,6 +720,108 @@ const MasterDashboard = () => {
         </div>
       )}
 
+      {/* 👁️ VIEW TENDER SUMMARY MODAL */}
+      {isSummaryModalOpen && viewSummaryTender && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white p-6 sm:p-8 rounded-[1.5rem] w-full max-w-2xl max-h-[85vh] overflow-y-auto shadow-2xl relative custom-scrollbar">
+            <button onClick={() => setIsSummaryModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-800 transition-colors p-1">
+              <X size={20} />
+            </button>
+            <h3 className="text-xl font-black text-slate-800 mb-1 pr-6">{viewSummaryTender.name_of_client}</h3>
+            <p className="text-xs font-mono font-bold text-indigo-600 mb-6">Tender No: {viewSummaryTender.tender_no}</p>
+            
+            <div className="space-y-4 text-sm text-slate-700">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100">
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Project Manager</span>
+                  <p className="font-bold text-slate-800">{viewSummaryTender.project_manager || 'Not Assigned'}</p>
+                </div>
+                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100">
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Financial Year</span>
+                  <p className="font-bold text-slate-800">{viewSummaryTender.financial_year || 'N/A'}</p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Tender Description</span>
+                <p className="whitespace-pre-wrap text-xs sm:text-sm leading-relaxed">{viewSummaryTender.description || 'No description provided.'}</p>
+              </div>
+
+              {viewSummaryTender.summary_file_url ? (
+                <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-indigo-900 font-bold text-xs">
+                    <FileText size={18} />
+                    <span>Uploaded Summary Document</span>
+                  </div>
+                  <a 
+                    href={viewSummaryTender.summary_file_url} 
+                    target="_blank" 
+                    rel="noreferrer" 
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-colors shadow-sm"
+                  >
+                    View File
+                  </a>
+                </div>
+              ) : (
+                <div className="p-3 bg-slate-50 border border-dashed rounded-xl text-center text-xs text-slate-400 italic">
+                  No summary document attached to this tender.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 📥 CUSTOM COLUMN EXPORT MODAL */}
+      {isExportModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white p-6 rounded-[1.5rem] w-full max-w-xl max-h-[85vh] overflow-y-auto shadow-2xl relative custom-scrollbar flex flex-col">
+            <button onClick={() => setIsExportModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-800 transition-colors p-1">
+              <X size={20} />
+            </button>
+
+            <h3 className="text-xl font-black text-slate-800 mb-1">Custom Export Columns</h3>
+            <p className="text-xs text-slate-500 mb-4">Select the specific fields you want included in your downloadable CSV report ({sortedTenders.length} rows matched).</p>
+
+            {/* Quick Toggle Controls */}
+            <div className="flex justify-between items-center bg-slate-50 p-3 rounded-xl mb-4 border border-slate-100">
+              <span className="text-xs font-bold text-slate-600">{selectedColumns.length} of {ALL_EXPORT_COLUMNS.length} Selected</span>
+              <div className="flex gap-2 text-xs font-bold">
+                <button type="button" onClick={handleSelectAllColumns} className="text-indigo-600 hover:underline">Select All</button>
+                <span className="text-slate-300">|</span>
+                <button type="button" onClick={handleClearAllColumns} className="text-slate-500 hover:underline">Clear All</button>
+              </div>
+            </div>
+
+            {/* Column Checkbox Grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-2 gap-2 max-h-60 overflow-y-auto custom-scrollbar p-1 mb-6 border border-slate-100 rounded-xl">
+              {ALL_EXPORT_COLUMNS.map(col => (
+                <label key={col.key} className="flex items-center gap-2 p-2 hover:bg-indigo-50/50 rounded-lg cursor-pointer text-xs font-medium text-slate-700 transition-colors">
+                  <input 
+                    type="checkbox" 
+                    checked={selectedColumns.includes(col.key)} 
+                    onChange={() => handleColumnToggle(col.key)}
+                    className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer"
+                  />
+                  <span>{col.label}</span>
+                </label>
+              ))}
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex justify-end gap-3 pt-2 border-t border-slate-100">
+              <button type="button" onClick={() => setIsExportModalOpen(false)} className="px-5 py-2.5 font-bold text-slate-500 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors text-xs">
+                Cancel
+              </button>
+              <button type="button" onClick={handleExportCustomCSV} className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold transition-colors flex items-center gap-2 text-xs">
+                <FileText size={16} /> Download Selected CSV
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Post Bid Modal Component */}
       <PostBidForm 
         tenderId={selectedTenderForPostBid}
         isOpen={isPostBidModalOpen}
