@@ -284,6 +284,17 @@ const MasterDashboard = () => {
     return ''; 
   };
 
+  // 📅 UTILITY: Format Date to strictly DD-MM-YYYY
+  const formatDisplayDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    if (isNaN(date)) return 'N/A';
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}-${month}-${year}`;
+  };
+
   // 🔍 Filter Logic (Client/Tender search + FY + Status Dropdown)
   const sortedTenders = useMemo(() => {
     const filtered = tenders.filter(t => {
@@ -437,13 +448,13 @@ const MasterDashboard = () => {
           <table className="w-full text-left min-w-[900px]">
             <thead className="bg-slate-900 text-white text-xs uppercase tracking-wider">
               <tr>
-                <th className="p-3 sm:p-4 whitespace-nowrap">Client</th>
-                <th className="p-3 sm:p-4 whitespace-nowrap">Tender No</th>
-                <th className="p-3 sm:p-4 whitespace-nowrap">Project Manager</th>
-                <th className="p-3 sm:p-4 whitespace-nowrap">Description</th>
-                <th className="p-3 sm:p-4 whitespace-nowrap">Due Date</th>
-                <th className="p-3 sm:p-4 whitespace-nowrap">Status</th>
-                <th className="p-3 sm:p-4 text-center whitespace-nowrap">Action</th>
+                <th className="p-3 sm:p-4 whitespace-nowrap text-left">Client</th>
+                <th className="p-3 sm:p-4 whitespace-nowrap text-left">Tender No</th>
+                <th className="p-3 sm:p-4 whitespace-nowrap text-left">Project Manager</th>
+                <th className="p-3 sm:p-4 whitespace-nowrap text-left">Description</th>
+                <th className="p-3 sm:p-4 whitespace-nowrap text-center">Due Date</th>
+                <th className="p-3 sm:p-4 whitespace-nowrap text-center">Status</th>
+                <th className="p-3 sm:p-4 whitespace-nowrap text-center">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -454,16 +465,16 @@ const MasterDashboard = () => {
               ) : (
                 sortedTenders.map((t) => (
                   <tr key={t.tender_no} className={`border-b text-xs sm:text-sm transition-all hover:bg-slate-50 ${getRowStyle(t.due_date)}`}>
-                    <td className="p-3 sm:p-4 font-bold text-slate-700 max-w-[150px] sm:max-w-[200px] truncate" title={t.name_of_client}>{t.name_of_client}</td>
-                    <td className="p-3 sm:p-4 font-mono text-slate-500 whitespace-nowrap">{t.tender_no}</td>
-                    <td className="p-3 sm:p-4 font-medium text-slate-600 whitespace-nowrap">{t.project_manager || 'N/A'}</td>
-                    <td className="p-3 sm:p-4 text-slate-600 max-w-[180px] sm:max-w-[220px] truncate" title={t.description}>{t.description || 'N/A'}</td>
-                    <td className="p-3 sm:p-4 font-bold whitespace-nowrap">{t.due_date ? new Date(t.due_date).toLocaleDateString() : 'N/A'}</td>
-                    <td className="p-3 sm:p-4">
+                    <td className="p-3 sm:p-4 font-bold text-slate-700 max-w-[150px] sm:max-w-[200px] truncate text-left" title={t.name_of_client}>{t.name_of_client}</td>
+                    <td className="p-3 sm:p-4 font-mono text-slate-500 whitespace-nowrap text-left">{t.tender_no}</td>
+                    <td className="p-3 sm:p-4 font-medium text-slate-600 whitespace-nowrap text-left">{t.project_manager || 'N/A'}</td>
+                    <td className="p-3 sm:p-4 text-slate-600 max-w-[180px] sm:max-w-[220px] truncate text-left" title={t.description}>{t.description || 'N/A'}</td>
+                    <td className="p-3 sm:p-4 font-bold whitespace-nowrap text-center">{formatDisplayDate(t.due_date)}</td>
+                    <td className="p-3 sm:p-4 text-center">
                       <select 
                         value={t.tender_status || 'Pending'} 
                         onChange={(e) => handleStatusChange(t.tender_no, e.target.value)} 
-                        className="bg-transparent border p-1 rounded font-black text-[9px] sm:text-[10px] uppercase text-indigo-600 outline-none cursor-pointer hover:bg-indigo-50 w-full min-w-[100px]"
+                        className="bg-transparent border p-1 rounded font-black text-[9px] sm:text-[10px] uppercase text-indigo-600 outline-none cursor-pointer hover:bg-indigo-50 w-full min-w-[100px] text-center"
                       >
                         <option value="Pending">Pending</option>
                         <option value="Tender Quoted">Tender Quoted</option>
