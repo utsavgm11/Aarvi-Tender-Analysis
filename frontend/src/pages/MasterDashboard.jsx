@@ -205,17 +205,24 @@ const MasterDashboard = () => {
   const handleSaveTender = async (e) => {
     e.preventDefault();
     
+    // 🎯 FIX: Safely strip commas from user input before sending to backend float fields
+    const cleanNumber = (val) => {
+      if (val === '' || val === null || val === undefined) return null;
+      const parsed = parseFloat(String(val).replace(/,/g, ''));
+      return isNaN(parsed) ? null : parsed;
+    };
+
     const formattedCompetitors = formData.competitors.map(c => ({
       rank: c.rank,
       company: c.company || "Unknown Competitor",
-      amount: c.amount ? parseFloat(c.amount) : 0.00,
+      amount: cleanNumber(c.amount) || 0.00,
       percent_diff: c.percent_diff ? parseFloat(c.percent_diff) : 0.00
     }));
 
     const cleanedData = {
       ...formData,
-      tender_open_price: formData.tender_open_price === '' ? null : parseFloat(formData.tender_open_price),
-      quoted_value: formData.quoted_value === '' ? null : parseFloat(formData.quoted_value),
+      tender_open_price: cleanNumber(formData.tender_open_price),
+      quoted_value: cleanNumber(formData.quoted_value),
       pre_bidding_date: formData.pre_bidding_date === '' ? null : formData.pre_bidding_date,
       competitors: formattedCompetitors
     };
@@ -381,132 +388,136 @@ const MasterDashboard = () => {
   if (loading && tenders.length === 0) return <div className="p-20 text-center font-bold text-slate-400">Loading Database...</div>;
 
   return (
-    <div className="relative p-4 sm:p-6 md:p-8 h-full bg-slate-50 overflow-y-auto">
-      
-      {/* 📊 Responsive Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6 sm:mb-8">
-        <StatCard title="Total Active" value={stats.totalActive} icon={<Clock className="text-blue-500 w-5 h-5 sm:w-6 sm:h-6"/>} />
-        <StatCard title="Tender Quoted" value={stats.quoted} icon={<Target className="text-amber-500 w-5 h-5 sm:w-6 sm:h-6"/>} />
-        <StatCard title="Tenders Won" value={stats.won} icon={<CheckCircle className="text-emerald-600 w-5 h-5 sm:w-6 sm:h-6"/>} />
-        <StatCard title="Tenders Lost" value={stats.lost} icon={<XCircle className="text-rose-500 w-5 h-5 sm:w-6 sm:h-6"/>} />
-      </div>
-
-      {/* 🔍 Search & Filters Bar */}
-      <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-4 mb-6">
+    // 🎯 FIX: Wrapped the entire dashboard in a strictly constrained flex container to enforce exact alignment boundaries
+    <div className="relative p-4 sm:p-6 md:p-8 h-full w-full flex-1 bg-slate-50 overflow-y-auto">
+      <div className="max-w-[1600px] mx-auto w-full flex flex-col">
         
-        <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-stretch sm:items-center w-full lg:w-auto">
-          {/* Search Box */}
-          <div className="relative w-full sm:w-64 lg:w-80">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input 
-              className="w-full pl-10 pr-4 py-2.5 sm:py-2 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm sm:text-base bg-white" 
-              placeholder="Search Client or Tender..." 
-              onChange={(e) => setSearchTerm(e.target.value)} 
-            />
-          </div>
+        {/* 📊 Responsive Stats Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6 sm:mb-8 w-full">
+          <StatCard title="Total Active" value={stats.totalActive} icon={<Clock className="text-blue-500 w-5 h-5 sm:w-6 sm:h-6"/>} />
+          <StatCard title="Tender Quoted" value={stats.quoted} icon={<Target className="text-amber-500 w-5 h-5 sm:w-6 sm:h-6"/>} />
+          <StatCard title="Tenders Won" value={stats.won} icon={<CheckCircle className="text-emerald-600 w-5 h-5 sm:w-6 sm:h-6"/>} />
+          <StatCard title="Tenders Lost" value={stats.lost} icon={<XCircle className="text-rose-500 w-5 h-5 sm:w-6 sm:h-6"/>} />
+        </div>
+
+        {/* 🔍 Search & Filters Bar */}
+        <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-4 mb-6 w-full">
           
-          {/* FY Filter Dropdown */}
-          <select 
-            value={selectedFY} 
-            onChange={(e) => setSelectedFY(e.target.value)}
-            className="bg-white border border-slate-200 px-4 py-2.5 sm:py-2 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium text-slate-600 cursor-pointer text-sm sm:text-base w-full sm:w-auto"
-          >
-            {availableFYs.map(fy => (
-              <option key={fy} value={fy}>{fy === 'All' ? 'All Financial Years' : fy}</option>
-            ))}
-          </select>
+          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-stretch sm:items-center w-full lg:w-auto">
+            {/* Search Box */}
+            <div className="relative w-full sm:w-64 lg:w-80">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input 
+                className="w-full pl-10 pr-4 py-2.5 sm:py-2 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm sm:text-base bg-white" 
+                placeholder="Search Client or Tender..." 
+                onChange={(e) => setSearchTerm(e.target.value)} 
+              />
+            </div>
+            
+            {/* FY Filter Dropdown */}
+            <select 
+              value={selectedFY} 
+              onChange={(e) => setSelectedFY(e.target.value)}
+              className="bg-white border border-slate-200 px-4 py-2.5 sm:py-2 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-medium text-slate-600 cursor-pointer text-sm sm:text-base w-full sm:w-auto"
+            >
+              {availableFYs.map(fy => (
+                <option key={fy} value={fy}>{fy === 'All' ? 'All Financial Years' : fy}</option>
+              ))}
+            </select>
 
-          {/* 🎯 Status Filter Dropdown */}
-          <select 
-            value={selectedStatus} 
-            onChange={(e) => setSelectedStatus(e.target.value)}
-            className="bg-white border border-slate-200 px-4 py-2.5 sm:py-2 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-semibold text-indigo-600 cursor-pointer text-sm sm:text-base w-full sm:w-auto"
-          >
-            <option value="All">All Statuses</option>
-            <option value="Pending">Pending</option>
-            <option value="Tender Quoted">Tender Quoted</option>
-            <option value="Tender Won">Tender Won</option>
-            <option value="Tender Lost">Tender Lost</option>
-            <option value="Tender Regret">Tender Regret</option>
-            <option value="Tender Cancelled">Tender Cancelled</option>
-          </select>
+            {/* 🎯 Status Filter Dropdown */}
+            <select 
+              value={selectedStatus} 
+              onChange={(e) => setSelectedStatus(e.target.value)}
+              className="bg-white border border-slate-200 px-4 py-2.5 sm:py-2 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 font-semibold text-indigo-600 cursor-pointer text-sm sm:text-base w-full sm:w-auto"
+            >
+              <option value="All">All Statuses</option>
+              <option value="Pending">Pending</option>
+              <option value="Tender Quoted">Tender Quoted</option>
+              <option value="Tender Won">Tender Won</option>
+              <option value="Tender Lost">Tender Lost</option>
+              <option value="Tender Regret">Tender Regret</option>
+              <option value="Tender Cancelled">Tender Cancelled</option>
+            </select>
+          </div>
+
+          <div className="flex flex-row gap-2 sm:gap-3 w-full lg:w-auto">
+            <button onClick={openAddModal} className="flex-1 lg:flex-none justify-center bg-emerald-600 hover:bg-emerald-700 transition-colors text-white px-4 sm:px-5 py-2.5 sm:py-2 rounded-xl sm:rounded-lg font-bold flex items-center gap-2 text-sm sm:text-base">
+              <Plus size={16}/> <span className="hidden sm:inline">Add Tender</span><span className="sm:hidden">Add</span>
+            </button>
+            <button onClick={() => setIsExportModalOpen(true)} className="flex-1 lg:flex-none justify-center bg-slate-800 hover:bg-slate-900 transition-colors text-white px-4 sm:px-5 py-2.5 sm:py-2 rounded-xl sm:rounded-lg font-bold flex items-center gap-2 text-sm sm:text-base">
+              <FileText size={16} /> <span className="hidden sm:inline">Export CSV</span><span className="sm:hidden">Export</span>
+            </button>
+          </div>
         </div>
 
-        <div className="flex flex-row gap-2 sm:gap-3 w-full lg:w-auto">
-          <button onClick={openAddModal} className="flex-1 lg:flex-none justify-center bg-emerald-600 hover:bg-emerald-700 transition-colors text-white px-4 sm:px-5 py-2.5 sm:py-2 rounded-xl sm:rounded-lg font-bold flex items-center gap-2 text-sm sm:text-base">
-            <Plus size={16}/> <span className="hidden sm:inline">Add Tender</span><span className="sm:hidden">Add</span>
-          </button>
-          <button onClick={() => setIsExportModalOpen(true)} className="flex-1 lg:flex-none justify-center bg-slate-800 hover:bg-slate-900 transition-colors text-white px-4 sm:px-5 py-2.5 sm:py-2 rounded-xl sm:rounded-lg font-bold flex items-center gap-2 text-sm sm:text-base">
-            <FileText size={16} /> <span className="hidden sm:inline">Export CSV</span><span className="sm:hidden">Export</span>
-          </button>
-        </div>
-      </div>
-
-      {/* 📋 Data Table Container */}
-      <div className="bg-white rounded-xl sm:rounded-2xl border shadow-sm w-full">
-        <div className="overflow-x-auto custom-scrollbar">
-          <table className="w-full text-left min-w-[900px]">
-            <thead className="bg-slate-900 text-white text-xs uppercase tracking-wider">
-              <tr>
-                <th className="p-3 sm:p-4 whitespace-nowrap text-left">Client</th>
-                <th className="p-3 sm:p-4 whitespace-nowrap text-left">Tender No</th>
-                <th className="p-3 sm:p-4 whitespace-nowrap text-left">Project Manager</th>
-                <th className="p-3 sm:p-4 whitespace-nowrap text-left">Description</th>
-                <th className="p-3 sm:p-4 whitespace-nowrap text-center">Due Date</th>
-                <th className="p-3 sm:p-4 whitespace-nowrap text-center">Status</th>
-                <th className="p-3 sm:p-4 whitespace-nowrap text-center">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedTenders.length === 0 ? (
+        {/* 📋 Data Table Container */}
+        {/* 🎯 FIX: Added overflow-hidden to the wrapper and table-fixed to the table to force absolute uniform column edges */}
+        <div className="bg-white rounded-xl sm:rounded-2xl border shadow-sm w-full overflow-hidden">
+          <div className="overflow-x-auto custom-scrollbar w-full">
+            <table className="w-full text-left min-w-[900px] table-fixed">
+              <thead className="bg-slate-900 text-white text-xs uppercase tracking-wider">
                 <tr>
-                  <td colSpan="7" className="p-8 text-center text-slate-400 italic">No tenders match your search criteria.</td>
+                  <th className="p-3 sm:p-4 whitespace-nowrap text-left w-[18%]">Client</th>
+                  <th className="p-3 sm:p-4 whitespace-nowrap text-left w-[15%]">Tender No</th>
+                  <th className="p-3 sm:p-4 whitespace-nowrap text-left w-[15%]">Project Manager</th>
+                  <th className="p-3 sm:p-4 whitespace-nowrap text-left w-[22%]">Description</th>
+                  <th className="p-3 sm:p-4 whitespace-nowrap text-center w-[10%]">Due Date</th>
+                  <th className="p-3 sm:p-4 whitespace-nowrap text-center w-[12%]">Status</th>
+                  <th className="p-3 sm:p-4 whitespace-nowrap text-center w-[8%]">Action</th>
                 </tr>
-              ) : (
-                sortedTenders.map((t) => (
-                  <tr key={t.tender_no} className={`border-b text-xs sm:text-sm transition-all hover:bg-slate-50 ${getRowStyle(t.due_date)}`}>
-                    <td className="p-3 sm:p-4 font-bold text-slate-700 max-w-[150px] sm:max-w-[200px] truncate text-left" title={t.name_of_client}>{t.name_of_client}</td>
-                    <td className="p-3 sm:p-4 font-mono text-slate-500 whitespace-nowrap text-left">{t.tender_no}</td>
-                    <td className="p-3 sm:p-4 font-medium text-slate-600 whitespace-nowrap text-left">{t.project_manager || 'N/A'}</td>
-                    <td className="p-3 sm:p-4 text-slate-600 max-w-[180px] sm:max-w-[220px] truncate text-left" title={t.description}>{t.description || 'N/A'}</td>
-                    <td className="p-3 sm:p-4 font-bold whitespace-nowrap text-center">{formatDisplayDate(t.due_date)}</td>
-                    <td className="p-3 sm:p-4 text-center">
-                      <select 
-                        value={t.tender_status || 'Pending'} 
-                        onChange={(e) => handleStatusChange(t.tender_no, e.target.value)} 
-                        className="bg-transparent border p-1 rounded font-black text-[9px] sm:text-[10px] uppercase text-indigo-600 outline-none cursor-pointer hover:bg-indigo-50 w-full min-w-[100px] text-center"
-                      >
-                        <option value="Pending">Pending</option>
-                        <option value="Tender Quoted">Tender Quoted</option>
-                        <option value="Tender Won">Tender Won</option>
-                        <option value="Tender Lost">Tender Lost</option>
-                        <option value="Tender Regret">Tender Regret</option>
-                        <option value="Tender Cancelled">Tender Cancelled</option>
-                      </select>
-                    </td>
-                    <td className="p-3 sm:p-4 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <button 
-                          onClick={() => openSummaryModal(t)} 
-                          title="View Tender Summary"
-                          className="p-1.5 sm:p-2 text-slate-400 hover:text-indigo-600 transition-colors rounded-lg hover:bg-indigo-50"
-                        >
-                          <Eye size={18} className="w-[16px] h-[16px] sm:w-[18px] sm:h-[18px]" />
-                        </button>
-                        <button 
-                          onClick={() => openEditModal(t)} 
-                          title="Edit Tender Details"
-                          className="p-1.5 sm:p-2 text-slate-400 hover:text-indigo-600 transition-colors rounded-lg hover:bg-indigo-50"
-                        >
-                          <Edit3 size={18} className="w-[16px] h-[16px] sm:w-[18px] sm:h-[18px]" />
-                        </button>
-                      </div>
-                    </td>
+              </thead>
+              <tbody>
+                {sortedTenders.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" className="p-8 text-center text-slate-400 italic">No tenders match your search criteria.</td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  sortedTenders.map((t) => (
+                    <tr key={t.tender_no} className={`border-b text-xs sm:text-sm transition-all hover:bg-slate-50 ${getRowStyle(t.due_date)}`}>
+                      <td className="p-3 sm:p-4 font-bold text-slate-700 truncate text-left" title={t.name_of_client}>{t.name_of_client}</td>
+                      <td className="p-3 sm:p-4 font-mono text-slate-500 truncate text-left" title={t.tender_no}>{t.tender_no}</td>
+                      <td className="p-3 sm:p-4 font-medium text-slate-600 truncate text-left" title={t.project_manager}>{t.project_manager || 'N/A'}</td>
+                      <td className="p-3 sm:p-4 text-slate-600 truncate text-left" title={t.description}>{t.description || 'N/A'}</td>
+                      <td className="p-3 sm:p-4 font-bold truncate text-center">{formatDisplayDate(t.due_date)}</td>
+                      <td className="p-3 sm:p-4 text-center">
+                        <select 
+                          value={t.tender_status || 'Pending'} 
+                          onChange={(e) => handleStatusChange(t.tender_no, e.target.value)} 
+                          className="bg-transparent border p-1 rounded font-black text-[9px] sm:text-[10px] uppercase text-indigo-600 outline-none cursor-pointer hover:bg-indigo-50 w-full min-w-[100px] text-center"
+                        >
+                          <option value="Pending">Pending</option>
+                          <option value="Tender Quoted">Tender Quoted</option>
+                          <option value="Tender Won">Tender Won</option>
+                          <option value="Tender Lost">Tender Lost</option>
+                          <option value="Tender Regret">Tender Regret</option>
+                          <option value="Tender Cancelled">Tender Cancelled</option>
+                        </select>
+                      </td>
+                      <td className="p-3 sm:p-4 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button 
+                            onClick={() => openSummaryModal(t)} 
+                            title="View Tender Summary"
+                            className="p-1.5 sm:p-2 text-slate-400 hover:text-indigo-600 transition-colors rounded-lg hover:bg-indigo-50"
+                          >
+                            <Eye size={18} className="w-[16px] h-[16px] sm:w-[18px] sm:h-[18px]" />
+                          </button>
+                          <button 
+                            onClick={() => openEditModal(t)} 
+                            title="Edit Tender Details"
+                            className="p-1.5 sm:p-2 text-slate-400 hover:text-indigo-600 transition-colors rounded-lg hover:bg-indigo-50"
+                          >
+                            <Edit3 size={18} className="w-[16px] h-[16px] sm:w-[18px] sm:h-[18px]" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -734,47 +745,62 @@ const MasterDashboard = () => {
       {/* 👁️ VIEW TENDER SUMMARY MODAL */}
       {isSummaryModalOpen && viewSummaryTender && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
-          <div className="bg-white p-6 sm:p-8 rounded-[1.5rem] w-full max-w-2xl max-h-[85vh] overflow-y-auto shadow-2xl relative custom-scrollbar">
-            <button onClick={() => setIsSummaryModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-800 transition-colors p-1">
+          <div className="bg-white p-6 sm:p-8 rounded-[1.5rem] w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-2xl relative custom-scrollbar flex flex-col">
+            <button onClick={() => setIsSummaryModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-800 transition-colors p-1 z-10 bg-white rounded-full">
               <X size={20} />
             </button>
-            <h3 className="text-xl font-black text-slate-800 mb-1 pr-6">{viewSummaryTender.name_of_client}</h3>
-            <p className="text-xs font-mono font-bold text-indigo-600 mb-6">Tender No: {viewSummaryTender.tender_no}</p>
-            
-            <div className="space-y-4 text-sm text-slate-700">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100">
-                  <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Project Manager</span>
-                  <p className="font-bold text-slate-800">{viewSummaryTender.project_manager || 'Not Assigned'}</p>
-                </div>
-                <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100">
-                  <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Financial Year</span>
-                  <p className="font-bold text-slate-800">{viewSummaryTender.financial_year || 'N/A'}</p>
-                </div>
-              </div>
-
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
-                <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Tender Description</span>
-                <p className="whitespace-pre-wrap text-xs sm:text-sm leading-relaxed">{viewSummaryTender.description || 'No description provided.'}</p>
-              </div>
-
-              {viewSummaryTender.summary_file_url ? (
-                <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-indigo-900 font-bold text-xs">
-                    <FileText size={18} />
-                    <span>Uploaded Summary Document</span>
+            <div className="shrink-0">
+              <h3 className="text-xl font-black text-slate-800 mb-1 pr-6">{viewSummaryTender.name_of_client}</h3>
+              <p className="text-xs font-mono font-bold text-indigo-600 mb-6">Tender No: {viewSummaryTender.tender_no}</p>
+              
+              <div className="space-y-4 text-sm text-slate-700">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100">
+                    <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Project Manager</span>
+                    <p className="font-bold text-slate-800">{viewSummaryTender.project_manager || 'Not Assigned'}</p>
                   </div>
-                  <a 
-                    href={viewSummaryTender.summary_file_url} 
-                    target="_blank" 
-                    rel="noreferrer" 
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-colors shadow-sm"
-                  >
-                    View File
-                  </a>
+                  <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100">
+                    <span className="text-[10px] font-bold uppercase text-slate-400 block mb-0.5">Financial Year</span>
+                    <p className="font-bold text-slate-800">{viewSummaryTender.financial_year || 'N/A'}</p>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Tender Description</span>
+                  <p className="whitespace-pre-wrap text-xs sm:text-sm leading-relaxed">{viewSummaryTender.description || 'No description provided.'}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex-1 mt-6 flex flex-col min-h-[400px]">
+              {viewSummaryTender.summary_file_url ? (
+                <div className="flex flex-col h-full">
+                  <div className="flex items-center justify-between mb-3 shrink-0">
+                    <div className="flex items-center gap-2 text-indigo-900 font-bold text-xs">
+                      <FileText size={18} />
+                      <span className="uppercase tracking-wider">Embedded Summary Document</span>
+                    </div>
+                    <a 
+                      href={viewSummaryTender.summary_file_url} 
+                      target="_blank" 
+                      rel="noreferrer" 
+                      className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-colors shadow-sm"
+                    >
+                      Open in New Tab
+                    </a>
+                  </div>
+                  <div className="w-full flex-1 bg-slate-100 rounded-xl overflow-hidden border border-slate-200">
+                    <iframe 
+                      src={viewSummaryTender.summary_file_url.toLowerCase().endsWith('.pdf') ? viewSummaryTender.summary_file_url : `https://docs.google.com/gview?url=${encodeURIComponent(viewSummaryTender.summary_file_url)}&embedded=true`} 
+                      width="100%" 
+                      height="100%" 
+                      title="Tender Summary Document"
+                      className="border-none bg-white"
+                    />
+                  </div>
                 </div>
               ) : (
-                <div className="p-3 bg-slate-50 border border-dashed rounded-xl text-center text-xs text-slate-400 italic">
+                <div className="p-6 bg-slate-50 border border-dashed border-slate-200 rounded-xl text-center text-xs text-slate-400 italic flex items-center justify-center h-full">
                   No summary document attached to this tender.
                 </div>
               )}

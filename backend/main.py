@@ -1,17 +1,20 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form , BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr
 from datetime import datetime, date
 from passlib.context import CryptContext
 from psycopg2.extras import RealDictCursor
 from typing import Optional, List
-
 import csv
 import io
 import os
 import uuid
+import json
+import shutil
 import psycopg2
+import asyncio
 
 # ----------------- IMPORTS -----------------
 from ai_service import (
@@ -21,9 +24,15 @@ from ai_service import (
 )
 from file_parser import extract_text_from_upload
 
-# ----------------- APP -----------------
+# ----------------- APP & FILE STORAGE SETUP -----------------
+# Ensure the uploads directory exists before mounting
+os.makedirs("uploads", exist_ok=True)
+
 app = FastAPI()
-import asyncio
+
+# Mount the uploads folder so files can be accessed via URL
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
 # ----------------- LIVE OCR PROGRESS STORE -----------------
 progress_store = {}
 result_store = {}
@@ -61,6 +70,7 @@ def get_db_connection():
     except Exception as e:
         print(f"❌ Database Connection Error: {e}")
         return None
+
 # ----------------- NEW: USAGE LOGGING HELPER -----------------
 def log_system_ai_usage(user_email: str, action_type: str, tender_no: str, input_tokens: int, output_tokens: int, estimated_cost: float):
     conn = get_db_connection()
@@ -91,8 +101,8 @@ def log_system_ai_usage(user_email: str, action_type: str, tender_no: str, input
         print(f"❌ [DB CRITICAL FAILURE] Database insertion rejected: {e}")
     finally:
         if conn: conn.close()
-# ----------------- MODELS -----------------
 
+# ----------------- MODELS -----------------
 # Auth Models
 class AuthRequest(BaseModel):
     email: str
@@ -171,7 +181,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # ----------------- STARTUP -----------------
 @app.on_event("startup")
-def print_routes():
+def on_startup():
     # Detect if we are on Render via the PORT env var
     port = os.getenv("PORT", "8001")
     print("\n==============================================")
@@ -181,6 +191,20 @@ def print_routes():
     print("   OCR ENGINE: TESSERACT")
     print("   AI ENGINE: GEMINI FLASH")
     print("==============================================\n")
+
+    # DB AUTO-MIGRATION: Ensure summary file url column exists
+    conn = get_db_connection()
+    if conn:
+        try:
+            cur = conn.cursor()
+            cur.execute("ALTER TABLE tenders ADD COLUMN IF NOT EXISTS summary_file_url TEXT;")
+            conn.commit()
+            print("✅ DB Schema Verified (File storage columns are ready).")
+        except Exception as e:
+            conn.rollback()
+            print(f"⚠️ DB Schema Warning: {e}")
+        finally:
+            conn.close()
 
 # ----------------- HEALTH -----------------
 @app.get("/health")
@@ -202,7 +226,7 @@ async def get_progress(task_id: str):
             return {"status": "completed", "result": data}
         elif task_info["status"] == "error":
             return {"status": "error", "error": task_info["error"]}
-
+            
     # 2. If not finished, return current OCR page processing status
     return progress_store.get(task_id, {
         "current": 0,
@@ -214,7 +238,6 @@ async def get_progress(task_id: str):
 async def run_analysis_background(files_data: list, task_id: str, user_email: str):
     """Runs completely in the background without holding the web connection hostage."""
     try:
-        import asyncio
         from file_parser import extract_text_from_file, clean_extracted_text
         
         combined_text = ""
@@ -251,7 +274,7 @@ async def run_analysis_background(files_data: list, task_id: str, user_email: st
 
         # Store the completed payload for the frontend to collect
         result_store[task_id] = {"status": "completed", "data": {"aarvi_intelligence": ui_payload}}
-
+        
     except Exception as e:
         print(f"❌ PIPELINE ERROR inside background worker: {e}")
         result_store[task_id] = {"status": "error", "error": str(e)}
@@ -289,7 +312,6 @@ async def analyze_tender(
         print(f"❌ PIPELINE ERROR inside analyze-tender: {e}")
         return {"error": str(e)}
 
-
 # ----------------- AUTH ROUTES -----------------
 @app.post("/signup")
 def signup(req: AuthRequest):
@@ -325,10 +347,10 @@ def login(req: AuthRequest):
         # Ensure we fetch the manager_name
         cur.execute("SELECT email, password_hash, role, manager_name FROM users WHERE email = %s", (req.email.lower(),))
         user = cur.fetchone()
-
+        
         if not user or not pwd_context.verify(req.password, user['password_hash']):
             raise HTTPException(status_code=401, detail="Invalid email or password")
-
+            
         return {
             "status": "success",
             "email": user['email'],
@@ -370,6 +392,7 @@ async def chat_endpoint(req: ChatRequest):
     except Exception as e:
         print(f"❌ PIPELINE ERROR inside chat-endpoint: {e}")
         return {"error": str(e)}
+
 # ----------------- CHAT HISTORY -----------------
 @app.get("/chats/sessions")
 def get_sessions(email: str, q: Optional[str] = None):
@@ -400,6 +423,7 @@ def get_sessions(email: str, q: Optional[str] = None):
         
         sessions = cur.fetchall()
         return [dict(s) for s in sessions]
+        
     except Exception as e:
         print(f"❌ Sidebar Fetch Error: {e}")
         return []
@@ -440,7 +464,7 @@ def save_chat_message(data: SaveMessage):
             """,
             (data.session_id, data.title or "New Analysis", data.user_email)
         )
-
+        
         cur.execute(
             """
             INSERT INTO chat_messages (session_id, role, content)
@@ -484,8 +508,9 @@ def clone_chat(session_id: str):
     conn = get_db_connection()
     try:
         cur = conn.cursor()
+        
         new_session_id = str(uuid.uuid4())
-
+        
         cur.execute(
             """
             SELECT title
@@ -495,12 +520,12 @@ def clone_chat(session_id: str):
             (session_id,)
         )
         original = cur.fetchone()
-
+        
         title = (
             original["title"] + " (Imported)"
             if original else "Imported Chat"
         )
-
+        
         cur.execute(
             """
             INSERT INTO chat_sessions (session_id, title)
@@ -508,7 +533,7 @@ def clone_chat(session_id: str):
             """,
             (new_session_id, title)
         )
-
+        
         cur.execute(
             """
             INSERT INTO chat_messages (session_id, role, content)
@@ -520,10 +545,8 @@ def clone_chat(session_id: str):
         )
         conn.commit()
         return {"new_session_id": new_session_id}
-
     except Exception as e:
         return {"error": str(e)}
-
     finally:
         if conn: conn.close()
 
@@ -553,11 +576,11 @@ def get_kpi_stats(year: str = "All", manager: str = None):
         
         where_clauses = ["tender_status != 'Quoted Legacy'"]
         params = []
-
+        
         if year != "All":
             where_clauses.append("financial_year = %s")
             params.append(year)
-
+            
         if manager and manager not in ["null", "None", "undefined", ""]:
             m_lower = manager.lower().strip()
             if m_lower == "manvendra":
@@ -565,9 +588,9 @@ def get_kpi_stats(year: str = "All", manager: str = None):
             else:
                 where_clauses.append("project_manager ILIKE %s")
             params.append(f"%{manager}%")
-
+            
         where_stmt = " AND ".join(where_clauses)
-
+        
         query = f"""
         SELECT
             SUM(CASE WHEN tender_status IN ('Tender Won', 'Tender Lost', 'Tender Quoted', 'Quoted', 'Quoted Active', 'Tender Cancelled') THEN 1 ELSE 0 END) AS total_participated,
@@ -590,7 +613,7 @@ def get_kpi_stats(year: str = "All", manager: str = None):
             }
         
         return {"total_count": 0, "win_rate": 0, "total_won_value": 0, "active_pipeline": 0}
-
+        
     except Exception as e:
         print(f"❌ KPI Error: {e}")
         return {"error": str(e)}
@@ -625,7 +648,7 @@ def get_tenders(manager: str = None):
         cur = conn.cursor()
         query = "SELECT * FROM tenders WHERE 1=1"
         params = []
-
+        
         if manager and manager not in ["null", "None", "undefined", ""]:
             m_lower = manager.lower().strip()
             if m_lower == "manvendra":
@@ -633,7 +656,7 @@ def get_tenders(manager: str = None):
             else:
                 query += " AND project_manager ILIKE %s"
             params.append(f"%{manager}%")
-
+            
         query += f"""
             ORDER BY 
                 CASE WHEN due_date >= '{today}' THEN 0 ELSE 1 END ASC,
@@ -682,13 +705,68 @@ def add_tender(t: Tender):
         )
         conn.commit()
         return {"message": "Success"}
-
     except Exception as e:
         print(f"DATABASE ERROR: {e}")
         return {"error": str(e)}
-
     finally:
         if conn: conn.close()
+
+# ----------------- ADD TENDER (WITH FILE UPLOAD) -----------------
+@app.post("/tenders-with-file")
+async def add_tender_with_file(
+    request: Request,
+    tender_data: str = Form(...),
+    summary_file: UploadFile = File(...)
+):
+    try:
+        t = json.loads(tender_data)
+        
+        # Clean the filename and save to local disk
+        safe_filename = summary_file.filename.replace(" ", "_")
+        unique_filename = f"{uuid.uuid4()}_{safe_filename}"
+        file_path = os.path.join("uploads", unique_filename)
+        
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(summary_file.file, buffer)
+            
+        # Create a direct URL linking to the mounted StaticFiles folder
+        file_url = f"{request.base_url}uploads/{unique_filename}"
+        
+        conn = get_db_connection()
+        if not conn:
+            return {"error": "Database disconnected"}
+            
+        cur = conn.cursor()
+        query = """
+            INSERT INTO tenders (
+                tender_status, received_date, due_date, name_of_client, location,
+                tender_no, tender_open_price, quoted_value, description, project_manager,
+                emd, emd_status, tender_fee_status, price_status, source,
+                comments, docs_prepared_by, financial_year, pre_bidding_date, pre_bid_time,
+                mode_of_conduct, platform_or_address, summary_file_url
+            )
+            VALUES (
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s
+            )
+        """
+        cur.execute(query, (
+            t.get('tender_status'), t.get('received_date'), t.get('due_date'), t.get('name_of_client'), t.get('location'),
+            t.get('tender_no'), t.get('tender_open_price'), t.get('quoted_value'), t.get('description'), t.get('project_manager'),
+            t.get('emd'), t.get('emd_status'), t.get('tender_fee_status'), t.get('price_status'), t.get('source'),
+            t.get('comments'), t.get('docs_prepared_by'), t.get('financial_year'), t.get('pre_bidding_date'), t.get('pre_bid_time'),
+            t.get('mode_of_conduct'), t.get('platform_or_address'), file_url
+        ))
+        conn.commit()
+        return {"message": "Success with file"}
+        
+    except Exception as e:
+        print(f"FILE UPLOAD ERROR: {e}")
+        return {"error": str(e)}
+    finally:
+        if 'conn' in locals() and conn: 
+            conn.close()
 
 # ----------------- EXPORT -----------------
 @app.get("/export-tenders")
@@ -698,20 +776,19 @@ def export_tenders():
         cur = conn.cursor()
         cur.execute("SELECT * FROM tenders")
         tenders = cur.fetchall()
-
+        
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow([
             "Tender No", "Client", "Status", "Received Date",
             "Due Date", "Pre-Bid Date", "Quoted Value", "Project Manager"
         ])
-
         for t in tenders:
             writer.writerow([
                 t["tender_no"], t["name_of_client"], t["tender_status"], t["received_date"],
                 t["due_date"], t["pre_bidding_date"], t["quoted_value"], t["project_manager"]
             ])
-
+            
         output.seek(0)
         return StreamingResponse(
             iter([output.getvalue()]),
@@ -720,7 +797,6 @@ def export_tenders():
                 "Content-Disposition": "attachment; filename=tenders_export.csv"
             }
         )
-
     finally:
         if conn: conn.close()
 
@@ -740,10 +816,8 @@ def quick_update_status(tender_no: str, update: StatusUpdate):
         )
         conn.commit()
         return {"message": "Status updated successfully"}
-
     except Exception as e:
         return {"error": str(e)}
-
     finally:
         if conn: conn.close()
 
@@ -777,16 +851,12 @@ def log_full_leaderboard_loss(tender_no: str, payload: FullPostBidPayload):
             )
         )
         conn.commit()
-
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Tender not found")
-
         return {"status": "success", "message": "Leaderboard logged successfully"}
-
     except Exception as e:
         print(f"❌ Error logging loss: {e}")
         return {"error": str(e)}
-
     finally:
         if conn: conn.close()
 
@@ -804,18 +874,14 @@ def delete_tender(tender_no: str):
             (tender_no,)
         )
         conn.commit()
-
         if cur.rowcount == 0:
             raise HTTPException(
                 status_code=404,
                 detail="Tender not found"
             )
-
         return {"message": "Tender deleted successfully"}
-
     except Exception as e:
         return {"error": str(e)}
-
     finally:
         if conn: conn.close()
 
@@ -847,17 +913,68 @@ def update_tender(tender_no: str, t: Tender):
         )
         conn.commit()
         return {"message": "Updated successfully"}
-
     except Exception as e:
         return {"error": str(e)}
-
     finally:
         if conn: conn.close()
 
-
+# ----------------- UPDATE TENDER (WITH FILE UPLOAD) -----------------
+@app.put("/tenders-with-file/{tender_no:path}")
+async def update_tender_with_file(
+    tender_no: str,
+    request: Request,
+    tender_data: str = Form(...),
+    summary_file: UploadFile = File(...)
+):
+    try:
+        t = json.loads(tender_data)
+        
+        # Save file securely
+        safe_filename = summary_file.filename.replace(" ", "_")
+        unique_filename = f"{uuid.uuid4()}_{safe_filename}"
+        file_path = os.path.join("uploads", unique_filename)
+        
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(summary_file.file, buffer)
+            
+        file_url = f"{request.base_url}uploads/{unique_filename}"
+        
+        conn = get_db_connection()
+        if not conn:
+            return {"error": "Database disconnected"}
+            
+        cur = conn.cursor()
+        cur.execute(
+            """
+            UPDATE tenders SET
+                name_of_client=%s, tender_status=%s, received_date=%s, due_date=%s,
+                pre_bidding_date=%s, pre_bid_time=%s, mode_of_conduct=%s, platform_or_address=%s,
+                location=%s, tender_open_price=%s, quoted_value=%s, description=%s,
+                project_manager=%s, emd=%s, emd_status=%s, tender_fee_status=%s,
+                price_status=%s, source=%s, comments=%s, docs_prepared_by=%s,
+                financial_year=%s, summary_file_url=%s
+            WHERE tender_no=%s
+            """,
+            (
+                t.get('name_of_client'), t.get('tender_status'), t.get('received_date'), t.get('due_date'),
+                t.get('pre_bidding_date'), t.get('pre_bid_time'), t.get('mode_of_conduct'), t.get('platform_or_address'),
+                t.get('location'), t.get('tender_open_price'), t.get('quoted_value'), t.get('description'),
+                t.get('project_manager'), t.get('emd'), t.get('emd_status'), t.get('tender_fee_status'),
+                t.get('price_status'), t.get('source'), t.get('comments'), t.get('docs_prepared_by'),
+                t.get('financial_year'), file_url, tender_no
+            )
+        )
+        conn.commit()
+        return {"message": "Updated successfully with file"}
+        
+    except Exception as e:
+        print(f"FILE UPLOAD UPDATE ERROR: {e}")
+        return {"error": str(e)}
+    finally:
+        if 'conn' in locals() and conn: 
+            conn.close()
 
 # ----------------- GLOBAL ACCOUNT COMPUTE PANELS (NORMAL FLATTENED ROUTES) -----------------
-
 @app.get("/api/users")
 def get_live_users(admin_email: Optional[str] = None):
     """Directly extracts existing records using flat routing layout"""
@@ -954,6 +1071,7 @@ def get_user_wise_billing_summary(admin_email: Optional[str] = None):
         return {"logs": []}
     finally:
         if conn: conn.close()
+
 # ----------------- MAIN -----------------
 if __name__ == "__main__":
     import uvicorn

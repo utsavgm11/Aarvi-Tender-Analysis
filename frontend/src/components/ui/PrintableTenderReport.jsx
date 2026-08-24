@@ -101,6 +101,13 @@ const PrintableTenderReport = ({ d, bidDecision }) => {
             <div className="grid-label">Client Organization</div>
             <div className="grid-value font-bold text-sm">{d.client_name}</div>
           </div>
+          
+          {/* NEW DUE DATE ROW */}
+          <div className="grid-row">
+            <div className="grid-label">Due Date</div>
+            <div className="grid-value font-bold text-sm">{d.due_date}</div>
+          </div>
+
           <div className="grid-row">
             <div className="grid-label">Financial Base</div>
             <div className="grid-value">

@@ -15,9 +15,9 @@ load_dotenv()
 
 # Securely pull the connection string into your application engine memory
 NEON_URL = os.getenv("DATABASE_URL")
-
 if not NEON_URL:
     raise ValueError("❌ CRITICAL ERROR: DATABASE_URL is missing from your environment variables!")
+
 # 1. Initialize the new Client
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
@@ -116,7 +116,6 @@ def normalize_client_name(extracted_name):
         return "GAIL"
         
     return extracted_name.strip()
-
 
 def fetch_client_intelligence(client_name: str):
     """
@@ -240,6 +239,7 @@ def fetch_client_intelligence(client_name: str):
 def ensure_ui_schema(ai_data: dict, logic_data: dict, intel_data: dict, error_msg: str = None) -> dict:
     template = {
         "tender_no": "Not Specified", "client_name": "Not Specified", "description": "Not Specified", 
+        "due_date": "Not Specified", # <--- NEW FIELD ADDED
         "tender_open_price": "Not Specified", "emd": "Not Specified",
         "financial_qualification": "Not Specified", "technical_qualification": "Not Specified",
         "mandatory_compliance": "Not Specified", "scope_of_work": "Not Specified",
@@ -296,7 +296,6 @@ def generate_tender_summary(tender_text: str = None):
     PACING DIRECTION: Treat this analysis as a high-value corporate audit. Take all the time needed to thoroughly evaluate details. Do not skim or skip lines. Depth, granularity, and strategic sharpness are mandatory.
     
     KNOWLEDGE BASE (Past Projects & Competitor Records): {kb_data}
-
     TASK: Scan the TENDER TEXT and map findings to the JSON schema below.
     
     CRITICAL INSTRUCTIONS (DO NOT OMIT ANY STEP):
@@ -308,10 +307,12 @@ def generate_tender_summary(tender_text: str = None):
     6. manpower_count:Always format this field as a clean, human-readable bulleted list. NEVER output raw Python dictionaries, JSON data blobs, or stringified code blocks (e.g., do NOT output things like "{{'total_proposed_ta': 13...}}"). State the total grand headcount clearly on the first line, followed by a clean bulleted location-wise or role-wise volume breakdown using escaped newlines ('\\n') for structural clarity
     7. COMPETITIVE HISTORICAL AUDIT: Cross-examine the current TENDER TEXT against the past project records and competitor tendencies in the KNOWLEDGE BASE. Identify structural traps, eligibility friction points, and competitor pricing baselines.
     8. NO TRUNCATION RULE: Do not truncate summaries or compress critical technical clauses to close the JSON schema quickly. Build complete, exhaustive data arrays for all fields.
+
     JSON SCHEMA (Output ONLY valid JSON):
     {{
       "tender_no": "Find the Tender/RFQ number",
       "client_name": "Extract Client Name",
+      "due_date": "Extract the exact submission deadline, closing date, or due date for the tender.",  # <--- NEW FIELD ADDED
       "tender_open_price": "Extract total tender value. Look for terms like 'Total Financial Limit', 'Estimated Value', 'Contract Value', 'SOR Value', or any total cost mentioned. If found, return numeric value. If not explicitly labeled, infer from context.",
       "emd": "Extract the EMD amount or percentage",
       "financial_qualification": "Extract Bulleted list of ANY financial conditions including Turnover, Net Worth, PBG, Security Deposit, Tender Value, or pricing constraints. If Turnover/Net Worth are missing, still extract PBG/SD and mark as 'No explicit turnover requirement'.",
@@ -328,6 +329,7 @@ def generate_tender_summary(tender_text: str = None):
 
     TENDER TEXT: {tender_text}
     """
+    
     try:
         response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
         
@@ -341,7 +343,7 @@ def generate_tender_summary(tender_text: str = None):
         except json.JSONDecodeError:
             match = re.search(r'\{.*\}', response.text, re.DOTALL)
             ai_extracted_data = json.loads(match.group(0)) if match else {}
-        
+            
         # Pass to logic.py for basic rule checks
         logic_decisions = evaluate_tender_rules(ai_extracted_data, kb_data, tender_text)
 
@@ -365,6 +367,7 @@ def generate_tender_summary(tender_text: str = None):
                 "strategic_advice": "Act as a Senior Consultant. Look at ALL the competitors and pricing trends in the raw data. Write a highly analytical, 5-sentence strategic recommendation. Tell our management team exactly what pricing, margins, or technical strategy we must adopt to beat them on this new bid."
             }}
             """
+            
             try:
                 # Ask Gemini to parse the messy text, find the Top 3, AND write the strategy
                 ai_strat_obj = model.generate_content(strategy_prompt, generation_config={"response_mime_type": "application/json"})
@@ -399,6 +402,7 @@ def generate_tender_summary(tender_text: str = None):
 
         # ✅ NEW: Package everything together including token counts for main.py to log
         final_ui_data = ensure_ui_schema(ai_extracted_data, logic_decisions, historical_intel)
+        
         return {
             "ui_data": final_ui_data,
             "input_tokens": total_input_tokens,

@@ -3,6 +3,9 @@ import axios from 'axios';
 import { ArrowLeft, Bell, Calendar, AlertCircle, Clock, Globe, MapPin, Edit3, Save, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
+// 🎯 FIX 1: Use the dynamic API URL so it syncs with main.py everywhere
+const API_BASE_URL = import.meta.env.VITE_API_URL || "https://attract-appeals-recorded-able.trycloudflare.com";
+
 const NotificationPage = () => {
   const [tenders, setTenders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -10,27 +13,31 @@ const NotificationPage = () => {
   const [editData, setEditData] = useState(null);
   const navigate = useNavigate();
 
- const fetchUpcoming = async () => {
-  setLoading(true);
-  try {
-    const res = await axios.get("http://127.0.0.1:8001/tenders/upcoming-prebid");
-    
-    // Get today's date in YYYY-MM-DD format for comparison
-    const today = new Date().toISOString().split('T')[0];
+  const fetchUpcoming = async () => {
+    setLoading(true);
+    try {
+      // 🎯 FIX 2: Swapped 127.0.0.1 for API_BASE_URL
+      const res = await axios.get(`${API_BASE_URL}/tenders/upcoming-prebid`);
+      
+      // 🎯 FIX 3: Get local timezone date, not UTC, so "today" is always accurate
+      const d = new Date();
+      d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+      const today = d.toISOString().split('T')[0];
 
-    // Filter: Only keep tenders where pre_bidding_date is today or in the future
-    const filteredTenders = res.data.filter(t => {
-      if (!t.pre_bidding_date) return false;
-      return t.pre_bidding_date >= today;
-    });
+      // Filter: Only keep tenders where pre_bidding_date is today or in the future
+      const filteredTenders = res.data.filter(t => {
+        if (!t.pre_bidding_date) return false;
+        return t.pre_bidding_date >= today;
+      });
 
-    setTenders(filteredTenders);
-  } catch (err) {
-    console.error("Error fetching notifications:", err);
-  } finally {
-    setLoading(false);
-  }
-};
+      setTenders(filteredTenders);
+    } catch (err) {
+      console.error("Error fetching notifications:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => { fetchUpcoming(); }, []);
 
   const openEditModal = (tender) => {
@@ -41,12 +48,24 @@ const NotificationPage = () => {
   const handleSave = async (e) => {
     e.preventDefault();
     try {
-      await axios.put(`http://127.0.0.1:8001/tenders/${encodeURIComponent(editData.tender_no)}`, editData);
+      // 🎯 FIX 4: Swapped 127.0.0.1 for API_BASE_URL
+      await axios.put(`${API_BASE_URL}/tenders/${encodeURIComponent(editData.tender_no)}`, editData);
       setIsModalOpen(false);
       fetchUpcoming(); // Refresh list
     } catch (err) {
       alert("Failed to update: " + err.message);
     }
+  };
+
+  // 📅 UTILITY: Format Date to strictly DD-MM-YYYY for display
+  const formatDisplayDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    const date = new Date(dateString);
+    if (isNaN(date)) return 'N/A';
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}-${month}-${year}`;
   };
 
   return (
@@ -88,7 +107,7 @@ const NotificationPage = () => {
                     <div className="font-mono text-[10px] sm:text-xs text-slate-400 mt-0.5">{t.tender_no}</div>
                   </td>
                   <td className="p-4 sm:p-5">
-                    <div className="text-xs sm:text-sm font-bold text-slate-700 whitespace-nowrap">{t.pre_bidding_date}</div>
+                    <div className="text-xs sm:text-sm font-bold text-slate-700 whitespace-nowrap">{formatDisplayDate(t.pre_bidding_date)}</div>
                     <div className="text-[10px] sm:text-xs text-slate-500 whitespace-nowrap">{t.pre_bid_time || '--:--'}</div>
                   </td>
                   <td className="p-4 sm:p-5">
