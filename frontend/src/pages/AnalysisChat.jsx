@@ -4,8 +4,14 @@ import { v4 as uuidv4 } from 'uuid';
 import { Send, FileUp, Loader2, Bot, User, CheckCircle2 } from 'lucide-react';
 import DecisionCard from '../components/ui/DecisionCard';
 
-// 3. Dynamic API URL (Better than hardcoding)
+// Dynamic API URL
 const API_BASE_URL = import.meta.env.VITE_API_URL || "https://attract-appeals-recorded-able.trycloudflare.com";
+
+// 🎯 FIX 1: Helper to reliably retrieve sanitized user email
+const getCleanUserEmail = () => {
+  const email = localStorage.getItem('userEmail') || localStorage.getItem('email') || 'unknown_user@aarviencon.com';
+  return email.toLowerCase().trim();
+};
 
 const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
   const [messages, setMessages] = useState([]);
@@ -18,8 +24,7 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
   const messagesEndRef = useRef(null);
   const pollingInterval = useRef(null);
 
-  // --- NEW: THE LOCK ---
-  // This prevents the history fetch from wiping the screen during an upload
+  // Prevents the history fetch from wiping the screen during an upload
   const isOperationActive = useRef(false);
 
   // Auto-scroll
@@ -29,7 +34,6 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
 
   // Fetch History
   useEffect(() => {
-    // LOCK CHECK: If we are uploading, DO NOT fetch history and wipe the screen
     if (isOperationActive.current) return;
 
     if (currentSessionId) {
@@ -37,7 +41,7 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
       axios.get(`${API_BASE_URL}/chats/history/${currentSessionId}`)
         .then(res => {
           let restoredTender = null;
-          const loadedMessages = res.data.map(m => {
+          const loadedMessages = (res.data || []).map(m => {
             try {
               const parsed = JSON.parse(m.content); 
               if (parsed && parsed.isTenderResult) {
@@ -60,10 +64,8 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
 
   const persistMessage = async (sessionId, role, content, title = null) => {
     try {
-      // 1. Get the logged-in user's email
-      const userEmail = localStorage.getItem('userEmail');
+      const userEmail = getCleanUserEmail();
 
-      // 2. Format the content (keeping your logic for tender results)
       const contentStr = typeof content === 'object' 
         ? JSON.stringify({ isTenderResult: true, data: content }) 
         : content;
@@ -73,13 +75,14 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
         role: role,
         content: contentStr,
         title: title,
-        user_email: userEmail // ✅ CRITICAL: Linking the message to the user for history
+        user_email: userEmail
       });
 
+      // 🎯 FIX 2: Trigger immediate sidebar refresh so the new chat shows up instantly
+      window.dispatchEvent(new Event('refresh-sidebar'));
       if (onChatUpdated) onChatUpdated(); 
     } catch (e) {
       console.error("❌ Failed to save message to DB:", e);
-      // If you see 'Network Error' here, ensure your Python terminal is running
     }
   };
 
@@ -87,40 +90,37 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
 
-    // --- ACTIVATE LOCK ---
     isOperationActive.current = true;
 
     let sid = currentSessionId;
-    let isNewSession = false;
     if (!sid) {
       sid = uuidv4();
-      isNewSession = true;
       onSessionSelect(sid);
     }
 
     const fileNames = Array.from(files).map(f => f.name).join(', ');
     const userMsg = `📄 Uploading ${files.length} file(s): ${fileNames}`;
     
-    // Functional update to preserve state
     setMessages(prev => [...prev, { type: 'user', text: userMsg }]);
     setIsLoading(true);
 
+    // 🎯 FIX 3: Save initial user upload message immediately to open database session
+    await persistMessage(sid, 'user', userMsg, `Analysis: ${files[0].name.substring(0, 25)}`);
+
     const taskId = `task_${uuidv4()}`;
-    // Initialize UI progress so the bar appears immediately
     setProgress({ current: 0, total: 100 }); 
 
-    const userEmail = localStorage.getItem('userEmail') || 'unknown_user@aarviencon.com';
+    const userEmail = getCleanUserEmail();
 
     const formData = new FormData();
-    formData.append('task_id', taskId); // TASK ID FIRST
-    formData.append('user_email', userEmail); // Sent for Token Cost Metering
+    formData.append('task_id', taskId);
+    formData.append('user_email', userEmail);
 
     for (let i = 0; i < files.length; i++) {
       formData.append('files', files[i]);
     }
 
     try {
-      // 1. Instantly queue the file on the server (Takes < 1 second, beats Vercel timeout)
       const uploadRes = await axios.post(`${API_BASE_URL}/analyze-tender`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
@@ -129,46 +129,44 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
         throw new Error(uploadRes.data.error);
       }
 
-      // 2. Start polling the progress endpoint every 3 seconds for the final AI data
       pollingInterval.current = setInterval(async () => {
         try {
           const res = await axios.get(`${API_BASE_URL}/progress/${taskId}`);
           
           if (res.data.status === "completed") {
-            // Success! The background AI task is done.
             clearInterval(pollingInterval.current);
             const tenderData = res.data.result.aarvi_intelligence;
             
             if (tenderData) {
               setActiveTender(tenderData);
               setMessages(prev => [...prev, { type: 'ai', result: tenderData }]);
-              await persistMessage(sid, 'ai', tenderData);
+              
+              // 🎯 FIX 4: Generate structured session title from tender data
+              const sessionTitle = (tenderData.tender_no && tenderData.tender_no !== "Not Specified")
+                ? `${tenderData.tender_no} - ${tenderData.client_name || 'Analysis'}`
+                : (tenderData.client_name || "Tender Analysis");
+
+              await persistMessage(sid, 'ai', tenderData, sessionTitle);
             }
-            window.dispatchEvent(new Event('refresh-sidebar'));
             
-            // Cleanup UI
             setIsLoading(false);
             setProgress(null);
             isOperationActive.current = false;
             if (fileInputRef.current) fileInputRef.current.value = '';
             
           } else if (res.data.status === "error") {
-            // The background task failed
             clearInterval(pollingInterval.current);
             throw new Error(res.data.error);
             
           } else if (res.data.total > 0) {
-            // Still scanning pages - update the loading bar
             setProgress({ current: res.data.current, total: res.data.total });
           }
         } catch (pollErr) {
-          // If the poll fails, log it but keep trying in case of temporary blip
           console.log("Polling check missed, retrying next cycle...");
         }
-      }, 3000); // Check every 3 seconds
+      }, 3000);
 
     } catch (e) {
-      // Handles upload failures or background task crashes
       const errorText = `Analysis failed: ${e.response?.data?.detail || e.message}`;
       setMessages(prev => [...prev, { type: 'ai', text: errorText }]);
       setIsLoading(false);
@@ -180,11 +178,13 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
 
   const handleChat = async () => {
     if (!input.trim()) return;
-    isOperationActive.current = true; // LOCK
+    isOperationActive.current = true;
     
     let sid = currentSessionId;
+    let isNewSession = false;
     if (!sid) {
       sid = uuidv4();
+      isNewSession = true;
       onSessionSelect(sid);
     }
 
@@ -193,28 +193,38 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
     setInput('');
     setIsLoading(true);
 
-    // Tell the database to save the USER'S question!
-    await persistMessage(sid, 'user', userQuery);
+    // 🎯 FIX 5: Auto-generate title if this is the start of a session
+    let chatTitle = null;
+    if (isNewSession || messages.length <= 1) {
+      try {
+        const titleRes = await axios.post(`${API_BASE_URL}/chats/generate-title`, { first_message: userQuery });
+        chatTitle = titleRes.data?.title || userQuery.substring(0, 30);
+      } catch (e) {
+        chatTitle = userQuery.substring(0, 30);
+      }
+    }
 
-    const userEmail = localStorage.getItem('userEmail') || 'unknown_user@aarviencon.com';
+    await persistMessage(sid, 'user', userQuery, chatTitle);
+
+    const userEmail = getCleanUserEmail();
 
     try {
       const response = await axios.post(`${API_BASE_URL}/chat/`, { 
         query: userQuery,
         context: activeTender || {},
         full_text: activeTender?.full_text || "",
-        user_email: userEmail // ✅ NEW: Sent for Token Cost Metering
+        user_email: userEmail
       });
       
-      setMessages(prev => [...prev, { type: 'ai', text: response.data.reply }]);
+      const aiReply = response.data.reply || response.data;
+      setMessages(prev => [...prev, { type: 'ai', text: aiReply }]);
       
-      // Tell the database to save the AI's reply
-      await persistMessage(sid, 'ai', response.data.reply);
+      await persistMessage(sid, 'ai', aiReply);
     } catch (e) {
       setMessages(prev => [...prev, { type: 'ai', text: "Strategic memory error." }]);
     } finally {
       setIsLoading(false);
-      isOperationActive.current = false; // UNLOCK
+      isOperationActive.current = false;
     }
   };
 
