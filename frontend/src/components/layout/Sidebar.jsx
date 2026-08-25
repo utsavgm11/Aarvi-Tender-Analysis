@@ -96,6 +96,7 @@ const ChatItem = ({ chat, currentSessionId, onSelect, onRename, onDelete }) => {
   );
 };
 
+// 🎯 FIX 1: Safely read environment variable API host
 const API_BASE_URL = import.meta.env.VITE_API_URL || "https://attract-appeals-recorded-able.trycloudflare.com";
 
 // --- Main Sidebar Component ---
@@ -113,15 +114,18 @@ const Sidebar = ({ isOpen, onClose, activeTab, setActiveTab, currentSessionId, o
 
   const fetchSessions = async () => {
     try {
-      const userEmail = localStorage.getItem('userEmail');
-      if (!userEmail) return;
+      const rawUserEmail = localStorage.getItem('userEmail');
+      if (!rawUserEmail) return;
+
+      // 🎯 FIX 2: Lowercase and strip user email to guarantee DB string matches
+      const cleanEmail = rawUserEmail.toLowerCase().trim();
 
       const res = await axios.get(`${API_BASE_URL}/chats/sessions`, {
-        params: { email: userEmail } 
+        params: { email: cleanEmail } 
       });
 
-      const newestFirst = [...res.data].reverse();
-      setSessions(newestFirst);
+      // Backend returns sessions ordered by created_at DESC (newest first)
+      setSessions(res.data || []);
     } catch (err) {
       console.error("Error fetching sessions:", err);
     }
@@ -225,7 +229,7 @@ const Sidebar = ({ isOpen, onClose, activeTab, setActiveTab, currentSessionId, o
               </>
             )}
 
-            {/* 🆕 ADMIN ONLY: Workspace Button */}
+            {/* ADMIN ONLY: Workspace Button */}
             {userRole === 'admin' && (
               <button 
                 onClick={() => { setActiveTab('admin-control'); if (window.innerWidth < 1024) onClose(); }} 
