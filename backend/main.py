@@ -71,6 +71,10 @@ def get_db_connection():
         print(f"❌ Database Connection Error: {e}")
         return None
 
+# 🎯 NEW FIX: Helper function to prevent PostgreSQL crashes on empty strings
+def clean_empty(val):
+    return None if val in ["", "null", "None", None] else val
+
 # ----------------- NEW: USAGE LOGGING HELPER -----------------
 def log_system_ai_usage(user_email: str, action_type: str, tender_no: str, input_tokens: int, output_tokens: int, estimated_cost: float):
     conn = get_db_connection()
@@ -192,14 +196,19 @@ def on_startup():
     print("   AI ENGINE: GEMINI FLASH")
     print("==============================================\n")
 
-    # DB AUTO-MIGRATION: Ensure summary file url column exists
+    # DB AUTO-MIGRATION
     conn = get_db_connection()
     if conn:
         try:
             cur = conn.cursor()
             cur.execute("ALTER TABLE tenders ADD COLUMN IF NOT EXISTS summary_file_url TEXT;")
+            
+            # ✅ FIX: Added auto-migration for the missing user_email column in chat_sessions
+            cur.execute("ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS user_email TEXT;")
+            cur.execute("ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+            
             conn.commit()
-            print("✅ DB Schema Verified (File storage columns are ready).")
+            print("✅ DB Schema Verified (File storage & Chat columns are ready).")
         except Exception as e:
             conn.rollback()
             print(f"⚠️ DB Schema Warning: {e}")
@@ -403,23 +412,25 @@ def get_sessions(email: str, q: Optional[str] = None):
     try:
         cur = conn.cursor()
         
-        # 1. Base Query: Always filter by the user's email
+        # ✅ FIX: Safely strip and lowercase the email for exact database matching
+        clean_email = email.lower().strip() if email else ""
+        
         if q:
             # Filtering by both user email AND search query
             query = """
                 SELECT * FROM chat_sessions
-                WHERE user_email = %s AND title ILIKE %s
+                WHERE LOWER(TRIM(user_email)) = %s AND title ILIKE %s
                 ORDER BY created_at DESC
             """
-            cur.execute(query, (email, f"%{q}%"))
+            cur.execute(query, (clean_email, f"%{q}%"))
         else:
             # Filtering only by user email
             query = """
                 SELECT * FROM chat_sessions 
-                WHERE user_email = %s 
+                WHERE LOWER(TRIM(user_email)) = %s 
                 ORDER BY created_at DESC
             """
-            cur.execute(query, (email,))
+            cur.execute(query, (clean_email,))
         
         sessions = cur.fetchall()
         return [dict(s) for s in sessions]
@@ -455,14 +466,19 @@ def save_chat_message(data: SaveMessage):
     try:
         cur = conn.cursor()
         
-        # ✅ FIX: Added user_email to the INSERT statement
+        # ✅ FIX: Safely lower and strip the email before inserting
+        clean_email = data.user_email.lower().strip() if data.user_email else None
+        
+        # ✅ FIX: Updated conflict handling so if a session previously missed the user_email, it gets assigned now
         cur.execute(
             """
             INSERT INTO chat_sessions (session_id, title, user_email)
             VALUES (%s, %s, %s)
-            ON CONFLICT (session_id) DO NOTHING
+            ON CONFLICT (session_id) DO UPDATE 
+            SET user_email = COALESCE(chat_sessions.user_email, EXCLUDED.user_email),
+                title = CASE WHEN chat_sessions.title = 'New Analysis' THEN EXCLUDED.title ELSE chat_sessions.title END;
             """,
-            (data.session_id, data.title or "New Analysis", data.user_email)
+            (data.session_id, data.title or "New Analysis", clean_email)
         )
         
         cur.execute(
@@ -511,27 +527,15 @@ def clone_chat(session_id: str):
         
         new_session_id = str(uuid.uuid4())
         
+        # ✅ FIX: Now copies the user_email explicitly so cloned chats show up in the sidebar
         cur.execute(
             """
-            SELECT title
+            INSERT INTO chat_sessions (session_id, title, user_email)
+            SELECT %s, title || ' (Imported)', user_email
             FROM chat_sessions
             WHERE session_id = %s
             """,
-            (session_id,)
-        )
-        original = cur.fetchone()
-        
-        title = (
-            original["title"] + " (Imported)"
-            if original else "Imported Chat"
-        )
-        
-        cur.execute(
-            """
-            INSERT INTO chat_sessions (session_id, title)
-            VALUES (%s, %s)
-            """,
-            (new_session_id, title)
+            (new_session_id, session_id)
         )
         
         cur.execute(
@@ -693,14 +697,15 @@ def add_tender(t: Tender):
                 %s,%s
             )
         """
+        # 🎯 FIX: Apply clean_empty to prevent DB crashes on empty dates/numbers
         cur.execute(
             query,
             (
-                t.tender_status, t.received_date, t.due_date, t.name_of_client, t.location,
-                t.tender_no, t.tender_open_price, t.quoted_value, t.description, t.project_manager,
-                t.emd, t.emd_status, t.tender_fee_status, t.price_status, t.source,
-                t.comments, t.docs_prepared_by, t.financial_year, t.pre_bidding_date, t.pre_bid_time,
-                t.mode_of_conduct, t.platform_or_address
+                t.tender_status, clean_empty(t.received_date), clean_empty(t.due_date), t.name_of_client, clean_empty(t.location),
+                t.tender_no, clean_empty(t.tender_open_price), clean_empty(t.quoted_value), clean_empty(t.description), clean_empty(t.project_manager),
+                clean_empty(t.emd), clean_empty(t.emd_status), clean_empty(t.tender_fee_status), clean_empty(t.price_status), clean_empty(t.source),
+                clean_empty(t.comments), clean_empty(t.docs_prepared_by), clean_empty(t.financial_year), clean_empty(t.pre_bidding_date), clean_empty(t.pre_bid_time),
+                clean_empty(t.mode_of_conduct), clean_empty(t.platform_or_address)
             )
         )
         conn.commit()
@@ -729,8 +734,10 @@ async def add_tender_with_file(
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(summary_file.file, buffer)
             
-        # Create a direct URL linking to the mounted StaticFiles folder
-        file_url = f"{request.base_url}uploads/{unique_filename}"
+        # 🎯 FIX: Read headers from Cloudflare Tunnel to build the correct public URL
+        scheme = request.headers.get("x-forwarded-proto", "http")
+        host = request.headers.get("x-forwarded-host", request.headers.get("host"))
+        file_url = f"{scheme}://{host}/uploads/{unique_filename}"
         
         conn = get_db_connection()
         if not conn:
@@ -751,12 +758,13 @@ async def add_tender_with_file(
                 %s,%s,%s
             )
         """
+        # 🎯 FIX: Apply clean_empty mapping here as well
         cur.execute(query, (
-            t.get('tender_status'), t.get('received_date'), t.get('due_date'), t.get('name_of_client'), t.get('location'),
-            t.get('tender_no'), t.get('tender_open_price'), t.get('quoted_value'), t.get('description'), t.get('project_manager'),
-            t.get('emd'), t.get('emd_status'), t.get('tender_fee_status'), t.get('price_status'), t.get('source'),
-            t.get('comments'), t.get('docs_prepared_by'), t.get('financial_year'), t.get('pre_bidding_date'), t.get('pre_bid_time'),
-            t.get('mode_of_conduct'), t.get('platform_or_address'), file_url
+            t.get('tender_status'), clean_empty(t.get('received_date')), clean_empty(t.get('due_date')), t.get('name_of_client'), clean_empty(t.get('location')),
+            t.get('tender_no'), clean_empty(t.get('tender_open_price')), clean_empty(t.get('quoted_value')), clean_empty(t.get('description')), clean_empty(t.get('project_manager')),
+            clean_empty(t.get('emd')), clean_empty(t.get('emd_status')), clean_empty(t.get('tender_fee_status')), clean_empty(t.get('price_status')), clean_empty(t.get('source')),
+            clean_empty(t.get('comments')), clean_empty(t.get('docs_prepared_by')), clean_empty(t.get('financial_year')), clean_empty(t.get('pre_bidding_date')), clean_empty(t.get('pre_bid_time')),
+            clean_empty(t.get('mode_of_conduct')), clean_empty(t.get('platform_or_address')), file_url
         ))
         conn.commit()
         return {"message": "Success with file"}
@@ -891,6 +899,7 @@ def update_tender(tender_no: str, t: Tender):
     conn = get_db_connection()
     try:
         cur = conn.cursor()
+        # 🎯 FIX: Apply clean_empty here as well
         cur.execute(
             """
             UPDATE tenders SET
@@ -903,12 +912,12 @@ def update_tender(tender_no: str, t: Tender):
             WHERE tender_no=%s
             """,
             (
-                t.name_of_client, t.tender_status, t.received_date, t.due_date,
-                t.pre_bidding_date, t.pre_bid_time, t.mode_of_conduct, t.platform_or_address,
-                t.location, t.tender_open_price, t.quoted_value, t.description,
-                t.project_manager, t.emd, t.emd_status, t.tender_fee_status,
-                t.price_status, t.source, t.comments, t.docs_prepared_by,
-                t.financial_year, tender_no
+                t.name_of_client, t.tender_status, clean_empty(t.received_date), clean_empty(t.due_date),
+                clean_empty(t.pre_bidding_date), clean_empty(t.pre_bid_time), clean_empty(t.mode_of_conduct), clean_empty(t.platform_or_address),
+                clean_empty(t.location), clean_empty(t.tender_open_price), clean_empty(t.quoted_value), clean_empty(t.description),
+                clean_empty(t.project_manager), clean_empty(t.emd), clean_empty(t.emd_status), clean_empty(t.tender_fee_status),
+                clean_empty(t.price_status), clean_empty(t.source), clean_empty(t.comments), clean_empty(t.docs_prepared_by),
+                clean_empty(t.financial_year), tender_no
             )
         )
         conn.commit()
@@ -937,13 +946,17 @@ async def update_tender_with_file(
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(summary_file.file, buffer)
             
-        file_url = f"{request.base_url}uploads/{unique_filename}"
+        # 🎯 FIX: Build correct Cloudflare URL
+        scheme = request.headers.get("x-forwarded-proto", "http")
+        host = request.headers.get("x-forwarded-host", request.headers.get("host"))
+        file_url = f"{scheme}://{host}/uploads/{unique_filename}"
         
         conn = get_db_connection()
         if not conn:
             return {"error": "Database disconnected"}
             
         cur = conn.cursor()
+        # 🎯 FIX: Clean empty strings here
         cur.execute(
             """
             UPDATE tenders SET
@@ -956,12 +969,12 @@ async def update_tender_with_file(
             WHERE tender_no=%s
             """,
             (
-                t.get('name_of_client'), t.get('tender_status'), t.get('received_date'), t.get('due_date'),
-                t.get('pre_bidding_date'), t.get('pre_bid_time'), t.get('mode_of_conduct'), t.get('platform_or_address'),
-                t.get('location'), t.get('tender_open_price'), t.get('quoted_value'), t.get('description'),
-                t.get('project_manager'), t.get('emd'), t.get('emd_status'), t.get('tender_fee_status'),
-                t.get('price_status'), t.get('source'), t.get('comments'), t.get('docs_prepared_by'),
-                t.get('financial_year'), file_url, tender_no
+                clean_empty(t.get('name_of_client')), t.get('tender_status'), clean_empty(t.get('received_date')), clean_empty(t.get('due_date')),
+                clean_empty(t.get('pre_bidding_date')), clean_empty(t.get('pre_bid_time')), clean_empty(t.get('mode_of_conduct')), clean_empty(t.get('platform_or_address')),
+                clean_empty(t.get('location')), clean_empty(t.get('tender_open_price')), clean_empty(t.get('quoted_value')), clean_empty(t.get('description')),
+                clean_empty(t.get('project_manager')), clean_empty(t.get('emd')), clean_empty(t.get('emd_status')), clean_empty(t.get('tender_fee_status')),
+                clean_empty(t.get('price_status')), clean_empty(t.get('source')), clean_empty(t.get('comments')), clean_empty(t.get('docs_prepared_by')),
+                clean_empty(t.get('financial_year')), file_url, tender_no
             )
         )
         conn.commit()
