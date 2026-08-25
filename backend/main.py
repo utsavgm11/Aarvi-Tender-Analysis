@@ -374,26 +374,22 @@ def login(req: AuthRequest):
 async def chat_endpoint(req: ChatRequest):
     print(f"\n[DEBUG] Interactive Chat Session Started for User: {req.user_email}")
     try:
-        # Fire conversational service
         reply_data = chat_with_tender(
             query=req.query,
             context=req.context,
             full_text=req.full_text
         )
         
-        # 📊 MATCHING THE CHAT REPLIES KEY STRUCTURE PERFECTLY
         reply_text = reply_data.get("reply", str(reply_data))
         in_tokens = reply_data.get("input_tokens", 250)
         out_tokens = reply_data.get("output_tokens", 150)
 
-        # Force baseline simulation tokens if they evaluate to zero
         if not in_tokens or in_tokens == 0: in_tokens = 250
         if not out_tokens or out_tokens == 0: out_tokens = 150
             
         t_no = req.context.get("tender_no", "N/A")
         computed_cost = (in_tokens * 0.00001) + (out_tokens * 0.00003)
         
-        # Push tracking row metrics cleanly to Neon PostgreSQL tables
         log_system_ai_usage(req.user_email, "Chat Query Workspace", t_no, in_tokens, out_tokens, computed_cost)
 
         return {"reply": reply_text}
@@ -411,24 +407,21 @@ def get_sessions(email: str, q: Optional[str] = None):
         
     try:
         cur = conn.cursor()
-        
-        # ✅ FIX: Safely strip and lowercase the email for exact database matching
         clean_email = email.lower().strip() if email else ""
         
+        # 🎯 FIX 1: Sort by updated_at with a fallback to created_at for older chats
         if q:
-            # Filtering by both user email AND search query
             query = """
                 SELECT * FROM chat_sessions
-                WHERE LOWER(TRIM(user_email)) = %s AND title ILIKE %s
-                ORDER BY created_at DESC
+                WHERE (LOWER(TRIM(user_email)) = %s OR user_email IS NULL) AND title ILIKE %s
+                ORDER BY COALESCE(updated_at, created_at) DESC
             """
             cur.execute(query, (clean_email, f"%{q}%"))
         else:
-            # Filtering only by user email
             query = """
                 SELECT * FROM chat_sessions 
-                WHERE LOWER(TRIM(user_email)) = %s 
-                ORDER BY created_at DESC
+                WHERE (LOWER(TRIM(user_email)) = %s OR user_email IS NULL)
+                ORDER BY COALESCE(updated_at, created_at) DESC
             """
             cur.execute(query, (clean_email,))
         
@@ -451,7 +444,7 @@ def get_history(session_id: str):
             SELECT role, content
             FROM chat_messages
             WHERE session_id = %s
-            ORDER BY timestamp ASC
+            ORDER BY id ASC
             """,
             (session_id,)
         )
@@ -466,30 +459,37 @@ def save_chat_message(data: SaveMessage):
     try:
         cur = conn.cursor()
         
-        # ✅ FIX: Safely lower and strip the email before inserting
         clean_email = data.user_email.lower().strip() if data.user_email else None
         
-        # ✅ FIX: Updated conflict handling so if a session previously missed the user_email, it gets assigned now
+        # 🎯 FIX 2: Safely convert NOW() to TEXT to match your table schema
         cur.execute(
             """
-            INSERT INTO chat_sessions (session_id, title, user_email)
-            VALUES (%s, %s, %s)
+            INSERT INTO chat_sessions (session_id, title, user_email, updated_at)
+            VALUES (%s, COALESCE(%s, 'New Analysis'), %s, TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS'))
             ON CONFLICT (session_id) DO UPDATE 
-            SET user_email = COALESCE(chat_sessions.user_email, EXCLUDED.user_email),
-                title = CASE WHEN chat_sessions.title = 'New Analysis' THEN EXCLUDED.title ELSE chat_sessions.title END;
+            SET user_email = COALESCE(EXCLUDED.user_email, chat_sessions.user_email),
+                title = CASE 
+                    WHEN EXCLUDED.title IS NOT NULL AND EXCLUDED.title != '' AND EXCLUDED.title != 'New Analysis' 
+                    THEN EXCLUDED.title 
+                    ELSE COALESCE(chat_sessions.title, EXCLUDED.title, 'New Analysis')
+                END,
+                updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS');
             """,
-            (data.session_id, data.title or "New Analysis", clean_email)
+            (data.session_id, data.title, clean_email)
         )
         
         cur.execute(
             """
-            INSERT INTO chat_messages (session_id, role, content)
-            VALUES (%s, %s, %s)
+            INSERT INTO chat_messages (session_id, role, content, timestamp)
+            VALUES (%s, %s, %s, TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS'))
             """,
             (data.session_id, data.role, data.content)
         )
         conn.commit()
         return {"status": "saved"}
+    except Exception as e:
+        print(f"❌ Error saving message: {e}")
+        return {"error": str(e)}
     finally:
         if conn: conn.close()
 
@@ -509,7 +509,7 @@ def rename_session(session_id: str, data: SessionRename):
         cur.execute(
             """
             UPDATE chat_sessions
-            SET title = %s
+            SET title = %s, updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
             WHERE session_id = %s
             """,
             (data.title, session_id)
@@ -527,11 +527,10 @@ def clone_chat(session_id: str):
         
         new_session_id = str(uuid.uuid4())
         
-        # ✅ FIX: Now copies the user_email explicitly so cloned chats show up in the sidebar
         cur.execute(
             """
-            INSERT INTO chat_sessions (session_id, title, user_email)
-            SELECT %s, title || ' (Imported)', user_email
+            INSERT INTO chat_sessions (session_id, title, user_email, updated_at)
+            SELECT %s, title || ' (Imported)', user_email, TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
             FROM chat_sessions
             WHERE session_id = %s
             """,
@@ -540,8 +539,8 @@ def clone_chat(session_id: str):
         
         cur.execute(
             """
-            INSERT INTO chat_messages (session_id, role, content)
-            SELECT %s, role, content
+            INSERT INTO chat_messages (session_id, role, content, timestamp)
+            SELECT %s, role, content, TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
             FROM chat_messages
             WHERE session_id = %s
             """,

@@ -8,8 +8,6 @@ const Navbar = ({ title = "Dashboard", onMenuClick }) => {
   const [notifyCount, setNotifyCount] = useState(0);
   const [userInitials, setUserInitials] = useState("U");
   
-  // This tells the app: Use the Render URL from Vercel, 
-  // but fall back to your laptop if the variable isn't found.
   const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8001";
 
   // --- Extract User Initials Logic ---
@@ -22,7 +20,8 @@ const Navbar = ({ title = "Dashboard", onMenuClick }) => {
         const parsedUser = JSON.parse(storedUser);
         nameToUse = parsedUser.manager_name || parsedUser.name || parsedUser.email || "User";
       } else {
-        const simpleName = localStorage.getItem('userName') || localStorage.getItem('manager_name');
+        // ✅ FIX 1: Added userEmail to the fallback chain so the avatar always has text
+        const simpleName = localStorage.getItem('userName') || localStorage.getItem('manager_name') || localStorage.getItem('userEmail');
         if (simpleName) nameToUse = simpleName;
       }
 
@@ -54,7 +53,8 @@ const Navbar = ({ title = "Dashboard", onMenuClick }) => {
     };
 
     checkHealthAndNotifications();
-    const interval = setInterval(checkHealthAndNotifications, 5000);
+    // ✅ FIX 2: Changed from 5000ms to 30000ms (30 seconds) to prevent Neon DB connection limits
+    const interval = setInterval(checkHealthAndNotifications, 30000);
     return () => clearInterval(interval);
   }, []);
 
