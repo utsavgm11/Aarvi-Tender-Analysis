@@ -8,11 +8,12 @@ import pytesseract
 import os
 import shutil  
 import asyncio  
+import gc
+import threading
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
 
-# --- STRICT CPU CONTROL FOR TESSERACT ---
+# --- STRICT CPU CONTROL FOR OCR LIBRARIES ---
 os.environ["OMP_THREAD_LIMIT"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -111,95 +112,92 @@ def clean_extracted_text(text: str) -> str:
     
     return text.strip()
 
-
 def extract_text_from_file(file_bytes: bytes, filename: str, task_id: str = None) -> str:
     """
-    Cloud-Safe Hybrid PDF Extractor: Uses ThreadPoolExecutor to run OCR in PARALLEL.
-    Hardcoded to 4 max_workers to safely match the exact 4 Core / 3.2GB RAM limits of lserver041-blr.
+    Memory-Bounded Adaptive Extractor:
+    Processes documents in controlled 50-page batches with automatic garbage collection.
+    Guarantees flat memory usage regardless of document page count.
     """
     fn_lower = filename.lower()
-    temp_pdf_path = f"temp_process_{task_id or 'standalone'}.pdf"
+    temp_pdf_path = f"temp_process_{task_id or 'standalone'}_{os.getpid()}.pdf"
 
     try:
         if fn_lower.endswith(".pdf"):
             with open(temp_pdf_path, "wb") as f:
                 f.write(file_bytes)
 
-            # Get total pages
             with fitz.open(temp_pdf_path) as doc:
                 total_pages = len(doc)
-            print(f"STATUS: PDF detected. Processing {total_pages} Pages CONCURRENTLY...", flush=True)
 
-            # Thread-safe progress tracking
+            print(f"STATUS: PDF detected ({filename}). Processing {total_pages} Pages with Bounded Memory Management...", flush=True)
+
             processed_count = 0
             progress_lock = threading.Lock()
-            page_results = {}
+            all_page_texts = [""] * total_pages
 
-            # Parallel Worker Function
+            # BATCH CONFIGURATION: Prevents RAM expansion on large files
+            BATCH_SIZE = 50
+            max_workers = 3  # Uses 3 threads to leave 1 CPU core free for HTTP traffic
+
             def process_single_page(page_num):
-                # PyMuPDF docs are not thread-safe, so we open a local reference per thread. Very fast.
-                with fitz.open(temp_pdf_path) as local_doc:
-                    page = local_doc[page_num]
-                    current_page_display = page_num + 1
-                    
-                    blocks = page.get_text("blocks")
-                    extracted = "\n".join([b[4] for b in blocks if b[4].strip()])
-                    
-                    page_text = ""
-                    log_msg = ""
-                    
-                    if len(extracted.strip()) > 100:
-                        if DOCLING_AVAILABLE:
-                            try:
-                                page_result = docling_converter.convert(temp_pdf_path, page_numbers=[current_page_display])
-                                page_markdown = page_result.document.export_to_markdown()
-                                page_text = f"\n--- Page {current_page_display} (Docling Smart Markdown) ---\n{page_markdown}\n"
-                                log_msg = f"  > Page {current_page_display}/{total_pages}: Docling Neural Extraction"
-                            except Exception:
-                                page_text = f"\n--- Page {current_page_display} ---\n{extracted}\n"
-                                log_msg = f"  > Page {current_page_display}/{total_pages}: PyMuPDF Digital Fallback"
-                        else:
-                            page_text = f"\n--- Page {current_page_display} ---\n{extracted}\n"
-                            log_msg = f"  > Page {current_page_display}/{total_pages}: PyMuPDF Native Block Extraction"
-                    else:
-                        # 150 DPI matrix is 4x faster than default while retaining Tesseract accuracy
-                        pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
-                        img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("L")
-                        ocr_result = pytesseract.image_to_string(img, lang="eng", config="--oem 1 --psm 6")
+                try:
+                    with fitz.open(temp_pdf_path) as local_doc:
+                        page = local_doc[page_num]
+                        current_page_display = page_num + 1
                         
-                        page_text = f"\n--- Page {current_page_display} (OCR Scan) ---\n{ocr_result}\n"
-                        log_msg = f"  > Page {current_page_display}/{total_pages}: Tesseract OCR Parallel Scan"
+                        blocks = page.get_text("blocks")
+                        extracted = "\n".join([b[4] for b in blocks if b[4].strip()])
+                        
+                        if len(extracted.strip()) > 50:
+                            page_text = f"\n--- Page {current_page_display} ---\n{extracted}\n"
+                            log_msg = f"  > Page {current_page_display}/{total_pages}: PyMuPDF Native Extraction"
+                        else:
+                            # 150 DPI render matrix (1.5x) for fast Tesseract OCR
+                            pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
+                            img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("L")
+                            ocr_result = pytesseract.image_to_string(img, lang="eng", config="--oem 1 --psm 6")
+                            
+                            # Explicitly release C-pointers and image buffers
+                            img.close()
+                            pix = None
+                            
+                            page_text = f"\n--- Page {current_page_display} (OCR Scan) ---\n{ocr_result}\n"
+                            log_msg = f"  > Page {current_page_display}/{total_pages}: Tesseract OCR Parallel Scan"
 
-                    return page_num, page_text, log_msg
+                        return page_num, page_text, log_msg
+                except Exception as page_err:
+                    return page_num, f"\n--- Page {page_num + 1} (Error) ---\n[Error: {str(page_err)}]\n", f"  ! Page {page_num + 1} Exception: {page_err}"
 
-            # LIMIT TO 4 WORKERS based on actual server specs (4 Cores, 3.2GB RAM available)
-            max_workers = 4
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {executor.submit(process_single_page, i): i for i in range(total_pages)}
+            # Process pages in micro-batches
+            for batch_start in range(0, total_pages, BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, total_pages)
                 
-                for future in as_completed(futures):
-                    page_num, page_text, log_msg = future.result()
-                    page_results[page_num] = page_text
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {executor.submit(process_single_page, i): i for i in range(batch_start, batch_end)}
                     
-                    print(log_msg, flush=True)
-                    
-                    # Safely update the progress bar for the frontend
-                    with progress_lock:
-                        processed_count += 1
-                        if task_id:
-                            try:
-                                from main import progress_store
-                                progress_store[task_id] = {"current": processed_count, "total": total_pages}
-                            except ImportError:
-                                pass
-            
-            # Reassemble pages in correct order
-            ordered_text = "".join([page_results[i] for i in range(total_pages)])
-            
-            if os.path.exists(temp_pdf_path):
-                os.remove(temp_pdf_path)
-            
-            return ordered_text
+                    for future in as_completed(futures):
+                        p_num, p_text, log_msg = future.result()
+                        all_page_texts[p_num] = p_text
+                        
+                        print(log_msg, flush=True)
+                        
+                        with progress_lock:
+                            processed_count += 1
+                            if task_id:
+                                try:
+                                    from main import progress_store
+                                    progress_store[task_id] = {"current": processed_count, "total": total_pages}
+                                except ImportError:
+                                    pass
+                
+                # Reclaim memory after every 50 pages
+                gc.collect()
+
+            final_text = "".join(all_page_texts)
+            all_page_texts.clear()
+            gc.collect()
+
+            return final_text
 
         elif fn_lower.endswith((".docx", ".doc")):
             print("STATUS: Processing Word Document...", flush=True)
@@ -237,7 +235,12 @@ def extract_text_from_file(file_bytes: bytes, filename: str, task_id: str = None
             return "Error: Unsupported file format."
 
     except Exception as e:
-        if os.path.exists(temp_pdf_path):
-            os.remove(temp_pdf_path)
         print(f"!!! CRITICAL ERROR in extraction: {str(e)}", flush=True)
         return f"Error reading file {filename}: {str(e)}"
+    finally:
+        if os.path.exists(temp_pdf_path):
+            try:
+                os.remove(temp_pdf_path)
+            except Exception:
+                pass
+        gc.collect()

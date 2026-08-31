@@ -288,141 +288,168 @@ def generate_tender_summary(tender_text: str = None):
             "input_tokens": 0, "output_tokens": 0, "tender_no": "N/A"
         }
 
-    # NEW: Safety Cap for massive multi-file uploads (Limits to ~900k tokens)
-    max_chars = 3500000  
-    if tender_text and len(tender_text) > max_chars:
-        print(f"⚠️ Truncating text from {len(tender_text)} to {max_chars} chars to protect API limits.")
-        tender_text = tender_text[:max_chars] + "\n\n...[TEXT TRUNCATED DUE TO GOOGLE API LIMITS]..."
-
     model = get_model()
     kb_data = get_knowledge_base()
 
-    prompt = f"""
-    ROLE: Expert Tender Data Extractor and Senior Strategic Bid Consultant.
-    PACING DIRECTION: Treat this analysis as a high-value corporate audit. Take all the time needed to thoroughly evaluate details. Do not skim or skip lines. Depth, granularity, and strategic sharpness are mandatory.
+    # ==============================================================================
+    # 🚀 UNLIMITED MAP-REDUCE CHUNKING ENGINE
+    # Automatically splits massive text into chunks to bypass Google API memory limits.
+    # Safe chunk size: 1,000,000 characters (~250k tokens)
+    # ==============================================================================
+    CHUNK_SIZE = 1000000 
+    chunks = [tender_text[i:i + CHUNK_SIZE] for i in range(0, len(tender_text), CHUNK_SIZE)]
     
-    KNOWLEDGE BASE (Past Projects & Competitor Records): {kb_data}
-    TASK: Scan the TENDER TEXT and map findings to the JSON schema below.
+    print(f"📦 Document processing: Splitting into {len(chunks)} independent chunk(s) for AI processing...", flush=True)
     
-    CRITICAL INSTRUCTIONS (DO NOT OMIT ANY STEP):
-    1. Use '•' (bullet points) and newlines for: financial_qualification, technical_qualification, mandatory_compliance, and scope_of_work.
-    2. description: Provide a 3-bullet point summary of the overall project.
-    3. financial_qualification: COMBINE all explicit "Turnover", "Net Worth", "Security Deposit", and "PBG" conditions. Use bullets for each requirement.
-    4. technical_qualification: COMBINE all "Similar Work" and "Experience" requirements into a bulleted list.
-    5. If exact keywords are not found, identify equivalent financial or value-related statements and extract them. Do NOT return empty if partial financial information exists.
-    6. manpower_count:Always format this field as a clean, human-readable bulleted list. NEVER output raw Python dictionaries, JSON data blobs, or stringified code blocks (e.g., do NOT output things like "{{'total_proposed_ta': 13...}}"). State the total grand headcount clearly on the first line, followed by a clean bulleted location-wise or role-wise volume breakdown using escaped newlines ('\\n') for structural clarity
-    7. COMPETITIVE HISTORICAL AUDIT: Cross-examine the current TENDER TEXT against the past project records and competitor tendencies in the KNOWLEDGE BASE. Identify structural traps, eligibility friction points, and competitor pricing baselines.
-    8. NO TRUNCATION RULE: Do not truncate summaries or compress critical technical clauses to close the JSON schema quickly. Build complete, exhaustive data arrays for all fields.
-
-    JSON SCHEMA (Output ONLY valid JSON):
-    {{
-      "tender_no": "Find the Tender/RFQ number",
-      "client_name": "Extract Client Name",
-      "due_date": "Extract the exact submission deadline, closing date, or due date for the tender.",  # <--- NEW FIELD ADDED
-      "tender_open_price": "Extract total tender value. Look for terms like 'Total Financial Limit', 'Estimated Value', 'Contract Value', 'SOR Value', or any total cost mentioned. If found, return numeric value. If not explicitly labeled, infer from context.",
-      "emd": "Extract the EMD amount or percentage",
-      "financial_qualification": "Extract Bulleted list of ANY financial conditions including Turnover, Net Worth, PBG, Security Deposit, Tender Value, or pricing constraints. If Turnover/Net Worth are missing, still extract PBG/SD and mark as 'No explicit turnover requirement'.",
-      "technical_qualification": "Bulleted list of Experience and Competency requirements",
-      "mandatory_compliance": "Bulleted list of PF/ESI/Statutory rules",
-      "scope_of_work": "Bulleted list of major deliverables and tasks",
-      "manpower_count": "State total headcount summary on line 1, then map an explicit bulleted list breakdown of every required role or location and its corresponding staffing quantity. Separate lines using escaped newlines ('\\n').",
-      "manpower_qual": "Bulleted list of exact educational requirements, age limits, vehicle requirements, and experience criteria required per profile.",
-      "shift_duty": "Extract shift/working hours",
-      "payment_terms": "Extract payment timeline",
-      "penalty_terms": "Extract LD clauses",
-      "similar_work": "Match with Knowledge Base"
-    }}
-
-    TENDER TEXT: {tender_text}
-    """
+    partial_extractions = []
     
-    try:
-        response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
+    # --- PHASE 1: MAP (Extract data from each chunk independently) ---
+    for idx, chunk in enumerate(chunks):
+        print(f"🔄 AI Extracting data from Chunk {idx + 1}/{len(chunks)}...", flush=True)
         
-        # ✅ NEW: Capture Pass 1 Token Footprint
-        if hasattr(response, 'usage_metadata') and response.usage_metadata:
-            total_input_tokens += getattr(response.usage_metadata, 'prompt_token_count', 0)
-            total_output_tokens += getattr(response.usage_metadata, 'candidates_token_count', 0)
+        prompt = f"""
+        ROLE: Expert Tender Data Extractor.
+        TASK: Scan the following PARTIAL segment of a massive Tender Document and map findings to the JSON schema.
+        If a detail is missing from this specific segment, output "Not Specified" for that field. Do not invent data.
+
+        CRITICAL INSTRUCTIONS:
+        1. Use '•' (bullet points) and newlines for arrays.
+        2. description: Provide a summary of the project based ONLY on this chunk.
+        3. manpower_count: Output a clean bulleted list using escaped newlines ('\\n').
+
+        JSON SCHEMA (Output ONLY valid JSON):
+        {{
+          "tender_no": "Find the Tender/RFQ number",
+          "client_name": "Extract Client Name",
+          "due_date": "Extract the exact submission deadline, closing date, or due date for the tender.",
+          "tender_open_price": "Extract total tender value",
+          "emd": "Extract the EMD amount or percentage",
+          "financial_qualification": "Extract financial conditions (Turnover, Net Worth, PBG)",
+          "technical_qualification": "Extract Experience and Competency requirements",
+          "mandatory_compliance": "Extract PF/ESI/Statutory rules",
+          "scope_of_work": "Extract major deliverables and tasks",
+          "manpower_count": "Map an explicit bulleted list breakdown of every required role",
+          "manpower_qual": "Extract educational requirements and experience criteria",
+          "shift_duty": "Extract shift/working hours",
+          "payment_terms": "Extract payment timeline",
+          "penalty_terms": "Extract LD clauses",
+          "similar_work": "Extract similar work required"
+        }}
+
+        TENDER TEXT SEGMENT: {chunk}
+        """
         
         try:
-            ai_extracted_data = json.loads(response.text)
-        except json.JSONDecodeError:
-            match = re.search(r'\{.*\}', response.text, re.DOTALL)
-            ai_extracted_data = json.loads(match.group(0)) if match else {}
-            
-        # Pass to logic.py for basic rule checks
-        logic_decisions = evaluate_tender_rules(ai_extracted_data, kb_data, tender_text)
-
-        # Look up Win/Loss Gauge Data & Top 3 Competitors from the Database!
-        extracted_client = ai_extracted_data.get("client_name", "Not Specified")
-        historical_intel = fetch_client_intelligence(extracted_client)
-
-        # --- NEW: AI COMPETITIVE STRATEGY GENERATION (PASS 2) ---
-        if historical_intel.get("kpi") != "No Past Record" and "No historical competitor data" not in historical_intel.get("competitors", ""):
-            strategy_prompt = f"""
-            ROLE: Senior Bidding Strategist & Consultant for Aarvi Encon.
-            CLIENT: {extracted_client}
-            
-            RAW HISTORICAL LOSS DATA (Competitors & Pricing):
-            {historical_intel.get('competitors')}
-            
-            TASK: Analyze the raw competitor data above and return your response EXACTLY in this JSON format.
-            
-            {{
-                "top_3_competitors": "A clean, bulleted list of the Top 3 most dangerous recurring competitors. For EACH competitor, you MUST explicitly state: 1) How many times we encountered them, 2) How many times they took the L1 rank, and 3) The specific reason we lost (e.g., pricing gaps, service charges).",
-                "strategic_advice": "Act as a Senior Consultant. Look at ALL the competitors and pricing trends in the raw data. Write a highly analytical, 5-sentence strategic recommendation. Tell our management team exactly what pricing, margins, or technical strategy we must adopt to beat them on this new bid."
-            }}
-            """
+            response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                total_input_tokens += getattr(response.usage_metadata, 'prompt_token_count', 0)
+                total_output_tokens += getattr(response.usage_metadata, 'candidates_token_count', 0)
             
             try:
-                # Ask Gemini to parse the messy text, find the Top 3, AND write the strategy
-                ai_strat_obj = model.generate_content(strategy_prompt, generation_config={"response_mime_type": "application/json"})
-                ai_strategy_response = ai_strat_obj.text
+                ai_extracted_data = json.loads(response.text)
+            except json.JSONDecodeError:
+                match = re.search(r'\{.*\}', response.text, re.DOTALL)
+                ai_extracted_data = json.loads(match.group(0)) if match else {}
                 
-                # ✅ NEW: Capture Pass 2 Token Footprint
-                if hasattr(ai_strat_obj, 'usage_metadata') and ai_strat_obj.usage_metadata:
-                    total_input_tokens += getattr(ai_strat_obj.usage_metadata, 'prompt_token_count', 0)
-                    total_output_tokens += getattr(ai_strat_obj.usage_metadata, 'candidates_token_count', 0)
-                
-                try:
-                    strategy_json = json.loads(ai_strategy_response)
-                except json.JSONDecodeError:
-                    match = re.search(r'\{.*\}', ai_strategy_response, re.DOTALL)
-                    strategy_json = json.loads(match.group(0)) if match else {}
+            partial_extractions.append(ai_extracted_data)
+        except Exception as e:
+            print(f"⚠️ Warning: Chunk {idx + 1} processing failed. Continuing to next chunk. Error: {e}", flush=True)
 
-                # 1. OVERWRITE the messy wall of text with the clean Top 3 AI summary
-                historical_intel["competitors"] = strategy_json.get("top_3_competitors", "Could not extract top competitors.")
-                
-                # 2. Extract the Senior Consultant Advice
-                ai_advice = strategy_json.get("strategic_advice", "Strategy generation failed.")
-                
-                base_advice = logic_decisions.get("strategic_advice", "")
-                if base_advice and base_advice != "Not Specified":
-                    logic_decisions["strategic_advice"] = f"{base_advice}\n\n**🤖 Senior Consultant Strategy:**\n{ai_advice}"
-                else:
-                    logic_decisions["strategic_advice"] = f"**🤖 Senior Consultant Strategy:**\n{ai_advice}"
-                    
-            except Exception as e:
-                print(f"Failed to generate competitive strategy: {e}")
-                pass
+    # --- PHASE 2: REDUCE (Merge all chunk extractions into one master JSON) ---
+    if len(partial_extractions) == 0:
+        final_ai_data = {}
+    elif len(partial_extractions) == 1:
+        # If it was a small document, no need to merge
+        final_ai_data = partial_extractions[0]
+    else:
+        print(f"🧩 Merging {len(partial_extractions)} chunk extractions into one master summary...", flush=True)
+        merge_prompt = f"""
+        ROLE: Senior Data Aggregator.
+        TASK: You are given an array of JSON objects extracted from different chapters of the same massive document.
+        Merge them into ONE final, comprehensive JSON object. 
+        - If multiple chunks found the same "tender_no" or "client_name", keep the clearest one.
+        - Combine all bullet points for arrays like "scope_of_work", "financial_qualification", and "manpower_count" into a single exhaustive list. Remove duplicates.
+        - NEVER output "Not Specified" if the valid data exists in ANY of the chunks.
 
-        # ✅ NEW: Package everything together including token counts for main.py to log
-        final_ui_data = ensure_ui_schema(ai_extracted_data, logic_decisions, historical_intel)
+        JSON SCHEMA REQUIRED (Output ONLY valid JSON):
+        {{
+          "tender_no": "Not Specified", "client_name": "Not Specified", "due_date": "Not Specified", "tender_open_price": "Not Specified", "emd": "Not Specified",
+          "financial_qualification": "Not Specified", "technical_qualification": "Not Specified", "mandatory_compliance": "Not Specified",
+          "scope_of_work": "Not Specified", "manpower_count": "Not Specified", "manpower_qual": "Not Specified", "shift_duty": "Not Specified",
+          "payment_terms": "Not Specified", "penalty_terms": "Not Specified", "similar_work": "Not Specified"
+        }}
+
+        PARTIAL EXTRACTIONS TO MERGE: {json.dumps(partial_extractions)}
+        """
+        try:
+            merge_response = model.generate_content(merge_prompt, generation_config={"response_mime_type": "application/json"})
+            if hasattr(merge_response, 'usage_metadata') and merge_response.usage_metadata:
+                total_input_tokens += getattr(merge_response.usage_metadata, 'prompt_token_count', 0)
+                total_output_tokens += getattr(merge_response.usage_metadata, 'candidates_token_count', 0)
+            
+            try:
+                final_ai_data = json.loads(merge_response.text)
+            except json.JSONDecodeError:
+                match = re.search(r'\{.*\}', merge_response.text, re.DOTALL)
+                final_ai_data = json.loads(match.group(0)) if match else {}
+        except Exception as e:
+            print(f"⚠️ Warning: Merge failed. Using first chunk as fallback. Error: {e}", flush=True)
+            final_ai_data = partial_extractions[0] if partial_extractions else {}
+
+    # --- PHASE 3: DATABASE INTELLIGENCE PIPELINE ---
+    logic_decisions = evaluate_tender_rules(final_ai_data, kb_data, tender_text[:50000])
+    extracted_client = final_ai_data.get("client_name", "Not Specified")
+    historical_intel = fetch_client_intelligence(extracted_client)
+
+    if historical_intel.get("kpi") != "No Past Record" and "No historical competitor data" not in historical_intel.get("competitors", ""):
+        strategy_prompt = f"""
+        ROLE: Senior Bidding Strategist & Consultant for Aarvi Encon.
+        CLIENT: {extracted_client}
         
-        return {
-            "ui_data": final_ui_data,
-            "input_tokens": total_input_tokens,
-            "output_tokens": total_output_tokens,
-            "tender_no": ai_extracted_data.get("tender_no", "N/A")
-        }
+        RAW HISTORICAL LOSS DATA (Competitors & Pricing):
+        {historical_intel.get('competitors')}
         
-    except Exception as e:
-        return {
-            "ui_data": ensure_ui_schema({}, {}, {}, error_msg=str(e)),
-            "input_tokens": total_input_tokens,
-            "output_tokens": total_output_tokens,
-            "tender_no": "N/A"
-        }
+        TASK: Analyze the raw competitor data above and return your response EXACTLY in this JSON format.
+        
+        {{
+            "top_3_competitors": "A clean, bulleted list of the Top 3 most dangerous recurring competitors. For EACH competitor, you MUST explicitly state: 1) How many times we encountered them, 2) How many times they took the L1 rank, and 3) The specific reason we lost (e.g., pricing gaps, service charges).",
+            "strategic_advice": "Act as a Senior Consultant. Look at ALL the competitors and pricing trends in the raw data. Write a highly analytical, 5-sentence strategic recommendation. Tell our management team exactly what pricing, margins, or technical strategy we must adopt to beat them on this new bid."
+        }}
+        """
+        
+        try:
+            ai_strat_obj = model.generate_content(strategy_prompt, generation_config={"response_mime_type": "application/json"})
+            if hasattr(ai_strat_obj, 'usage_metadata') and ai_strat_obj.usage_metadata:
+                total_input_tokens += getattr(ai_strat_obj.usage_metadata, 'prompt_token_count', 0)
+                total_output_tokens += getattr(ai_strat_obj.usage_metadata, 'candidates_token_count', 0)
+            
+            try:
+                strategy_json = json.loads(ai_strat_obj.text)
+            except json.JSONDecodeError:
+                match = re.search(r'\{.*\}', ai_strat_obj.text, re.DOTALL)
+                strategy_json = json.loads(match.group(0)) if match else {}
+
+            historical_intel["competitors"] = strategy_json.get("top_3_competitors", "Could not extract top competitors.")
+            ai_advice = strategy_json.get("strategic_advice", "Strategy generation failed.")
+            base_advice = logic_decisions.get("strategic_advice", "")
+            
+            if base_advice and base_advice != "Not Specified":
+                logic_decisions["strategic_advice"] = f"{base_advice}\n\n**🤖 Senior Consultant Strategy:**\n{ai_advice}"
+            else:
+                logic_decisions["strategic_advice"] = f"**🤖 Senior Consultant Strategy:**\n{ai_advice}"
+                
+        except Exception as e:
+            print(f"Failed to generate competitive strategy: {e}", flush=True)
+            pass
+
+    final_ui_data = ensure_ui_schema(final_ai_data, logic_decisions, historical_intel)
+    
+    return {
+        "ui_data": final_ui_data,
+        "input_tokens": total_input_tokens,
+        "output_tokens": total_output_tokens,
+        "tender_no": final_ai_data.get("tender_no", "N/A")
+    }
 
 def chat_with_tender(query: str, context: dict, full_text: str = ""):
     model = get_model()
