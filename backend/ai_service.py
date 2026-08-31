@@ -9,6 +9,7 @@ from config import GEMINI_API_KEY
 from logic import evaluate_tender_rules 
 from google import genai
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import gc
 
 # --- DATABASE CONNECTION ---
 # Load the environment variables from your local .env file
@@ -112,7 +113,6 @@ def normalize_client_name(extracted_name):
         return "BPCL"
         
     # --- SIMPLIFIED DIRECT GAIL RULE ---
-    # If the text contains "GAIL" anywhere (or the old "GAS AUTHORITY"), it belongs to GAIL
     if "GAIL" in name or "GAS AUTHORITY" in name:
         return "GAIL"
         
@@ -157,7 +157,7 @@ def fetch_client_intelligence(client_name: str):
         
         kpi_text = f"[ ❌ {loss_rate}% | 🎉 {win_rate}% ]\nTotal Bids: {total_bids} (Won: {won_bids} | Lost: {lost_bids} | Quoted: {quoted_bids} | Cancelled: {cancelled_bids})"
         
-        # 3. Extract Top 3 Competitor Threats AND Qualitative Comments from lost tenders
+        # 3. Extract Top 3 Competitor Threats AND Qualitative Comments
         threats = {}
         raw_comments = []
         lost_records_with_data = 0
@@ -166,7 +166,6 @@ def fetch_client_intelligence(client_name: str):
             if row['tender_status'] == 'Tender Lost':
                 has_extracted_something = False
                 
-                # --- A: Try to extract structured Competitor Data ---
                 competitors = row.get('competitor_list')
                 if competitors and isinstance(competitors, str) and competitors.strip() not in ['[]', '']:
                     try:
@@ -191,7 +190,6 @@ def fetch_client_intelligence(client_name: str):
                         raw_comments.append(f"Competitor Note: {competitors.strip()}")
                         has_extracted_something = True
 
-                # --- B: Extract unstructured qualitative comments ---
                 comments = row.get('comments')
                 if comments and str(comments).strip().lower() not in ['nan', 'none', '']:
                     raw_comments.append(str(comments).strip())
@@ -200,7 +198,7 @@ def fetch_client_intelligence(client_name: str):
                 if has_extracted_something:
                     lost_records_with_data += 1
                     
-        # 4. Format the Competitor UI Text Block & Strategy Feed
+        # 4. Format the Competitor UI Text Block
         if lost_records_with_data == 0:
             comp_text = f"We have {total_bids} bids on record, but no competitor history or loss comments were found for these past losses."
         else:
@@ -236,8 +234,7 @@ def fetch_client_intelligence(client_name: str):
 def ensure_ui_schema(ai_data: dict, logic_data: dict, intel_data: dict, error_msg: str = None) -> dict:
     template = {
         "tender_no": "Not Specified", "client_name": "Not Specified", "description": "Not Specified", 
-        "due_date": "Not Specified", 
-        "tender_open_price": "Not Specified", "emd": "Not Specified",
+        "due_date": "Not Specified", "tender_open_price": "Not Specified", "emd": "Not Specified",
         "financial_qualification": "Not Specified", "technical_qualification": "Not Specified",
         "mandatory_compliance": "Not Specified", "scope_of_work": "Not Specified",
         "manpower_count": "Not Specified", "manpower_qual": "Not Specified",
@@ -245,10 +242,7 @@ def ensure_ui_schema(ai_data: dict, logic_data: dict, intel_data: dict, error_ms
         "penalty_terms": "Not Specified", "similar_work": "Not Specified",
         "bid_decision": "PENDING", "pq_status": "PENDING", 
         "win_probability": "PENDING", "profit_forecast": "PENDING", 
-        
-        "win_loss_kpi": "Not Specified",
-        "historical_competitors": "Not Specified",
-        
+        "win_loss_kpi": "Not Specified", "historical_competitors": "Not Specified",
         "strategic_advice": "Not Specified", "compliance_status": "Not Specified", 
         "compliance_reason": "Not Specified"
     }
@@ -293,7 +287,7 @@ def process_chunk_with_ai(chunk_text: str, chunk_idx: int, total_chunks: int):
     {{
       "tender_no": "Find the Tender/RFQ number",
       "client_name": "Extract Client Name",
-      "due_date": "Extract the exact submission deadline, closing date, or due date for the tender.",
+      "due_date": "Extract the exact submission deadline",
       "tender_open_price": "Extract total tender value",
       "emd": "Extract the EMD amount or percentage",
       "financial_qualification": "Extract financial conditions (Turnover, Net Worth, PBG)",
@@ -331,18 +325,32 @@ def process_chunk_with_ai(chunk_text: str, chunk_idx: int, total_chunks: int):
 
 
 # ==============================================================================
-# 🚀 MAIN GENERATOR (Reads from Disk Stream)
+# 🚀 MAIN GENERATOR (Auto-Detects String & Processes Unlimited Size)
 # ==============================================================================
-def generate_tender_summary_from_disk(file_path: str):
+def generate_tender_summary(tender_text: str = None):
     """
-    Reads the physical text file generated by the file_parser to avoid RAM crashes.
-    Uses Map-Reduce to parse massive 20,000+ page files perfectly.
+    Safely processes massive extracted text strings in memory.
+    Uses Map-Reduce to parse 20,000+ page strings perfectly.
     """
     total_input_tokens = 0
     total_output_tokens = 0
 
-    # Ensure the disk stream exists
-    if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+    if not tender_text:
+        return {
+            "ui_data": ensure_ui_schema({}, {}, {}, "Empty tender document stream provided."),
+            "input_tokens": 0, "output_tokens": 0, "tender_no": "N/A"
+        }
+
+    # If by chance it is passed a file path instead of a string, read it.
+    if len(tender_text) < 1000:
+        try:
+            if os.path.exists(tender_text):
+                with open(tender_text, "r", encoding="utf-8") as f:
+                    tender_text = f.read()
+        except Exception:
+            pass
+
+    if len(tender_text.strip()) == 0:
         return {
             "ui_data": ensure_ui_schema({}, {}, {}, "Empty tender document stream provided."),
             "input_tokens": 0, "output_tokens": 0, "tender_no": "N/A"
@@ -351,16 +359,9 @@ def generate_tender_summary_from_disk(file_path: str):
     model = get_model()
     kb_data = get_knowledge_base()
 
-    # Read the file into safe 1,200,000 character chunks (~300 pages each)
-    CHUNK_SIZE = 1200000 
-    chunks = []
-    
-    with open(file_path, "r", encoding="utf-8") as f:
-        while True:
-            chunk = f.read(CHUNK_SIZE)
-            if not chunk:
-                break
-            chunks.append(chunk)
+    # Slice the massive string into safe 1,000,000 character chunks
+    CHUNK_SIZE = 1000000 
+    chunks = [tender_text[i:i + CHUNK_SIZE] for i in range(0, len(tender_text), CHUNK_SIZE)]
 
     total_chunks = len(chunks)
     partial_extractions = [None] * total_chunks
@@ -417,33 +418,27 @@ def generate_tender_summary_from_disk(file_path: str):
                 match = re.search(r'\{.*\}', merge_response.text, re.DOTALL)
                 final_ai_data = json.loads(match.group(0)) if match else {}
         except Exception as e:
-            print(f"⚠️ Warning: Merge failed. Using first chunk as fallback. Error: {e}", flush=True)
+            print(f"⚠️ Warning: Merge failed. Using first chunk as fallback.", flush=True)
             final_ai_data = valid_extractions[0] if valid_extractions else {}
 
     # --- PHASE 3: DATABASE INTELLIGENCE & LOGIC RULES ---
-    # Read the first 50,000 characters from disk for rule evaluation
-    sample_text = ""
-    with open(file_path, "r", encoding="utf-8") as f:
-        sample_text = f.read(50000)
-
+    sample_text = tender_text[:50000]
+    
     logic_decisions = evaluate_tender_rules(final_ai_data, kb_data, sample_text)
     extracted_client = final_ai_data.get("client_name", "Not Specified")
     historical_intel = fetch_client_intelligence(extracted_client)
 
-    # Competitor AI Consultant Strategy Generation
     if historical_intel.get("kpi") != "No Past Record" and "No historical competitor data" not in historical_intel.get("competitors", ""):
         strategy_prompt = f"""
-        ROLE: Senior Bidding Strategist & Consultant for Aarvi Encon.
+        ROLE: Senior Bidding Strategist & Consultant.
         CLIENT: {extracted_client}
-        
         RAW HISTORICAL LOSS DATA (Competitors & Pricing):
         {historical_intel.get('competitors')}
         
         TASK: Analyze the raw competitor data above and return your response EXACTLY in this JSON format.
-        
         {{
-            "top_3_competitors": "A clean, bulleted list of the Top 3 most dangerous recurring competitors. For EACH competitor, you MUST explicitly state: 1) How many times we encountered them, 2) How many times they took the L1 rank, and 3) The specific reason we lost.",
-            "strategic_advice": "Act as a Senior Consultant. Write a highly analytical, 5-sentence strategic recommendation. Tell our management exactly what pricing, margins, or technical strategy we must adopt to beat them."
+            "top_3_competitors": "A clean, bulleted list of the Top 3 most dangerous recurring competitors. State explicitly: 1) Encounters, 2) L1 wins, 3) Specific loss reason.",
+            "strategic_advice": "Write a highly analytical, 5-sentence strategic recommendation to management to beat them."
         }}
         """
         try:
@@ -466,9 +461,12 @@ def generate_tender_summary_from_disk(file_path: str):
                 logic_decisions["strategic_advice"] = f"{base_advice}\n\n**🤖 Senior Consultant Strategy:**\n{ai_advice}"
             else:
                 logic_decisions["strategic_advice"] = f"**🤖 Senior Consultant Strategy:**\n{ai_advice}"
-                
         except Exception as e:
             print(f"Failed to generate competitive strategy: {e}", flush=True)
+
+    # Reclaim RAM explicitly
+    del chunks
+    gc.collect()
 
     final_ui_data = ensure_ui_schema(final_ai_data, logic_decisions, historical_intel)
     
@@ -479,12 +477,9 @@ def generate_tender_summary_from_disk(file_path: str):
         "tender_no": final_ai_data.get("tender_no", "N/A")
     }
 
-# Ensure backwards compatibility just in case main.py uses the old name
-generate_tender_summary = generate_tender_summary_from_disk
 
 def chat_with_tender(query: str, context: dict, full_text: str = ""):
     model = get_model()
-    # Safely slice to ~1000 pages max for chat context to prevent chat crashes
     prompt = f"Context: {json.dumps(context)}\nFull Doc: {full_text[:3500000]}\nQuery: {query}\n\nStrictly answer based on Full Doc using Markdown bullets."
     
     response = model.generate_content(prompt)
@@ -510,16 +505,13 @@ def generate_chat_title(first_message: str) -> str:
     Rules:
     - Output ONLY the title.
     - Do not use quotes, punctuation, or conversational filler.
-    - Focus on the Client Name or primary subject (e.g., "ONGC Maintenance Tender" or "HPCL Manpower Bid").
+    - Focus on the Client Name or primary subject.
     """
     try:
         response = model.generate_content(prompt)
         title = response.text.strip().replace('"', '').replace('\n', '')
-        
         if len(title) > 35:
             title = title[:32] + "..."
-            
         return title
     except Exception as e:
-        print(f"Error generating chat title: {e}")
         return "New Analysis"

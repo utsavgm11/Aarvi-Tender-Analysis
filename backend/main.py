@@ -22,7 +22,8 @@ from ai_service import (
     chat_with_tender,
     generate_chat_title
 )
-from file_parser import extract_text_from_upload
+# 🎯 FIX: Import the new disk streaming function instead of the RAM extractor
+from file_parser import append_text_to_disk_stream
 
 # ----------------- APP & FILE STORAGE SETUP -----------------
 # Ensure the uploads directory exists before mounting
@@ -167,7 +168,6 @@ class SessionRename(BaseModel):
 class StatusUpdate(BaseModel):
     tender_status: str
 
-# ---> PASTE THESE NEW MODELS HERE <---
 class CompetitorEntry(BaseModel):
     rank: str
     company: str
@@ -243,27 +243,33 @@ async def get_progress(task_id: str):
         "status": "processing"
     })
 
-# ----------------- BACKGROUND AI WORKER -----------------
+# ----------------- BACKGROUND AI WORKER (UPDATED FOR DISK STREAMING) -----------------
 async def run_analysis_background(files_data: list, task_id: str, user_email: str):
-    """Runs completely in the background without holding the web connection hostage."""
+    """Runs completely in the background, streaming text to disk to prevent RAM crashes."""
+    stream_file_path = f"stream_{task_id}.txt"
     try:
-        from file_parser import extract_text_from_file, clean_extracted_text
+        from file_parser import append_text_to_disk_stream
         
-        combined_text = ""
+        # Clean up any leftover files from failed runs
+        if os.path.exists(stream_file_path):
+            os.remove(stream_file_path)
+
         for file_name, file_bytes in files_data:
-            # Run extraction in a background thread to prevent blocking FastAPI
-            raw_text = await asyncio.to_thread(extract_text_from_file, file_bytes, file_name, task_id)
-            cleaned_text = clean_extracted_text(raw_text)
+            # 🎯 FIX: Append text directly to the hard drive in batches
+            await asyncio.to_thread(
+                append_text_to_disk_stream, 
+                file_bytes, 
+                file_name, 
+                stream_file_path, 
+                task_id
+            )
             
-            if cleaned_text:
-                combined_text += f"\n\n--- Document: {file_name} ---\n{cleaned_text}\n"
-                
-        if not combined_text.strip():
+        if not os.path.exists(stream_file_path) or os.path.getsize(stream_file_path) == 0:
             result_store[task_id] = {"status": "error", "error": "Could not extract text from uploaded files."}
             return
             
-        # Fire the ai_service function
-        result = generate_tender_summary(combined_text)
+        # 🎯 FIX: Pass the file path (not a massive string) to ai_service
+        result = generate_tender_summary(stream_file_path)
         
         # 📊 MATCHING THE AI_SERVICE KEY STRUCTURE PERFECTLY
         in_tokens = result.get("input_tokens", 4500)
@@ -288,6 +294,13 @@ async def run_analysis_background(files_data: list, task_id: str, user_email: st
         print(f"❌ PIPELINE ERROR inside background worker: {e}")
         result_store[task_id] = {"status": "error", "error": str(e)}
     finally:
+        # Safely delete the massive temporary text file from the server hard drive
+        if os.path.exists(stream_file_path):
+            try:
+                os.remove(stream_file_path)
+            except Exception:
+                pass
+                
         # Clean up OCR tracking
         if task_id in progress_store:
             del progress_store[task_id]
