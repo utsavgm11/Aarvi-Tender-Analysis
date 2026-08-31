@@ -288,6 +288,12 @@ def generate_tender_summary(tender_text: str = None):
             "input_tokens": 0, "output_tokens": 0, "tender_no": "N/A"
         }
 
+    # NEW: Safety Cap for massive multi-file uploads (Limits to ~900k tokens)
+    max_chars = 3500000  
+    if tender_text and len(tender_text) > max_chars:
+        print(f"⚠️ Truncating text from {len(tender_text)} to {max_chars} chars to protect API limits.")
+        tender_text = tender_text[:max_chars] + "\n\n...[TEXT TRUNCATED DUE TO GOOGLE API LIMITS]..."
+
     model = get_model()
     kb_data = get_knowledge_base()
 
@@ -420,7 +426,8 @@ def generate_tender_summary(tender_text: str = None):
 
 def chat_with_tender(query: str, context: dict, full_text: str = ""):
     model = get_model()
-    prompt = f"Context: {json.dumps(context)}\nFull Doc: {full_text[:50000]}\nQuery: {query}\n\nStrictly answer based on Full Doc using Markdown bullets."
+    # Increased text slice from 50k to 1.5 Million characters
+    prompt = f"Context: {json.dumps(context)}\nFull Doc: {full_text[:1500000]}\nQuery: {query}\n\nStrictly answer based on Full Doc using Markdown bullets."
     
     response = model.generate_content(prompt)
     
