@@ -4,6 +4,7 @@ import sqlite3
 import pandas as pd
 import numpy as np
 import psycopg2
+import time
 from dotenv import load_dotenv
 
 # --- LOAD ENVIRONMENT VARIABLES ---
@@ -25,7 +26,6 @@ SEARCH_FOLDERS = [
     os.path.join('backend', 'knowledge_base')
 ]
 
-# Comprehensive mappings for 2019 through 2027 data variations
 COLUMN_VARIANTS = {
     'tender_no': ['tender_no', 'tender_no_', 'tender_no.', 'tender_number', 'ref_no', 'tender_ref', 'sr_no', 'rfq_no'],
     'name_of_client': ['client', 'client_name', 'name_of_client', 'customer', 'operator', 'company'],
@@ -64,7 +64,6 @@ def clean_empty_str(val):
     return str(val).strip()
 
 def calculate_financial_year(date_val):
-    """Dynamically calculates Indian Financial Year (April - March) if missing in Excel."""
     if pd.isna(date_val) or not date_val: 
         return None
     try:
@@ -79,7 +78,6 @@ def calculate_financial_year(date_val):
 def run_pipeline():
     print("🚀 === STARTING INTELLIGENT DATA CLEANING & SYNC PIPELINE ===")
 
-    # 1. LOAD RAW EXCEL FILES
     all_dfs = []
     for folder in SEARCH_FOLDERS:
         if os.path.exists(folder):
@@ -88,6 +86,10 @@ def run_pipeline():
                     file_path = os.path.join(folder, file)
                     print(f"📂 Scanning: {file_path}")
                     try:
+                        import warnings
+                        import openpyxl
+                        warnings.filterwarnings('ignore', category=UserWarning, module='openpyxl')
+                        
                         df = pd.read_excel(file_path, engine='openpyxl')
                         df.columns = [re.sub(r'[\s/.]+', '_', str(c).strip().lower()).strip('_') for c in df.columns]
                         
@@ -103,10 +105,9 @@ def run_pipeline():
                         print(f"⚠️ Error loading {file_path}: {e}")
 
     if not all_dfs:
-        print("❌ No raw Excel files found in historical_data/ or backend/knowledge_base/")
+        print("❌ No raw Excel files found.")
         return
 
-    # 2. AGGREGATE & CLEAN
     print("🧹 Cleaning and standardizing historical tender data...")
     raw_df = pd.concat(all_dfs, ignore_index=True)
 
@@ -114,37 +115,30 @@ def run_pipeline():
         print("❌ Error: Could not identify 'tender_no' column. Sync aborted.")
         return
 
-    # Strip whitespace, drop completely blank tender numbers
     raw_df['tender_no'] = raw_df['tender_no'].astype(str).str.strip().str.upper()
     raw_df = raw_df[~raw_df['tender_no'].isin(['NAN', 'NONE', '', 'SR_NO', 'NULL', 'NA'])]
 
-    # Date normalization
     for col in ['received_date', 'due_date', 'pre_bidding_date']:
         if col in raw_df.columns:
             raw_df[col] = pd.to_datetime(raw_df[col], errors='coerce').dt.strftime('%Y-%m-%d')
 
-    # Currency normalization
     for col in ['tender_open_price', 'quoted_value']:
         if col in raw_df.columns:
             raw_df[col] = raw_df[col].apply(clean_currency)
 
-    # Status normalization
     if 'tender_status' in raw_df.columns:
         raw_df['tender_status'] = raw_df['tender_status'].apply(standardize_status)
 
-    # 3. DEDUPLICATION (Keep most recent record per tender_no)
     sort_cols = [c for c in ['received_date', 'due_date'] if c in raw_df.columns]
     if sort_cols:
         clean_df = raw_df.sort_values(by=sort_cols, ascending=True).groupby('tender_no', as_index=False).last()
     else:
         clean_df = raw_df.groupby('tender_no', as_index=False).last()
 
-    # Sanitize dataframe to prevent PostgreSQL crashes on NaN
     clean_df = clean_df.replace({np.nan: None})
+    total_records = len(clean_df)
+    print(f"✨ Extracted {total_records} UNIQUE, cleaned records across all years.")
 
-    print(f"✨ Extracted {len(clean_df)} UNIQUE, cleaned records across all years.")
-
-    # 4. UPDATE LOCAL SQLITE (Append Only)
     os.makedirs(os.path.dirname(SQLITE_DB), exist_ok=True)
     try:
         sqlite_conn = sqlite3.connect(SQLITE_DB)
@@ -162,63 +156,110 @@ def run_pipeline():
     except Exception as e:
         print(f"⚠️ Local SQLite update skipped or failed: {e}")
 
-    # 5. SAFE UPSERT TO NEON CLOUD POSTGRESQL (NON-DESTRUCTIVE)
-    print("☁️ Safely merging line-by-line into Neon Cloud PostgreSQL...")
-    try:
-        pg_conn = psycopg2.connect(POSTGRES_URL)
-        cur = pg_conn.cursor()
+    print("☁️ Safely merging into Neon Cloud PostgreSQL in batches to prevent timeouts...")
+    
+    synced_count = 0
+    inserted_count = 0
+    updated_count = 0
+    batch_size = 100
 
-        synced_count = 0
-        for _, row in clean_df.iterrows():
-            t_no = clean_empty_str(row.get('tender_no'))
-            if not t_no: continue
+    for start_idx in range(0, total_records, batch_size):
+        end_idx = min(start_idx + batch_size, total_records)
+        batch_df = clean_df.iloc[start_idx:end_idx]
+        
+        retries = 3
+        while retries > 0:
+            try:
+                pg_conn = psycopg2.connect(POSTGRES_URL)
+                cur = pg_conn.cursor()
+                
+                batch_inserted = 0
+                batch_updated = 0
 
-            # Smart Financial Year Assignment
-            fin_year = clean_empty_str(row.get('financial_year'))
-            if not fin_year:
-                fin_year = calculate_financial_year(row.get('received_date')) or calculate_financial_year(row.get('due_date')) or 'Unknown'
+                for _, row in batch_df.iterrows():
+                    t_no = clean_empty_str(row.get('tender_no'))
+                    if not t_no: continue
 
-            cur.execute("""
-                INSERT INTO tenders (
-                    tender_no, name_of_client, tender_status, 
-                    received_date, due_date, pre_bidding_date,
-                    tender_open_price, quoted_value, location, 
-                    project_manager, financial_year, emd, description, comments
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (tender_no) DO UPDATE SET
-                    financial_year = COALESCE(EXCLUDED.financial_year, tenders.financial_year),
-                    tender_status = EXCLUDED.tender_status,
-                    tender_open_price = COALESCE(EXCLUDED.tender_open_price, tenders.tender_open_price),
-                    quoted_value = COALESCE(EXCLUDED.quoted_value, tenders.quoted_value),
-                    project_manager = COALESCE(EXCLUDED.project_manager, tenders.project_manager),
-                    comments = COALESCE(EXCLUDED.comments, tenders.comments),
-                    due_date = COALESCE(EXCLUDED.due_date, tenders.due_date);
-            """, (
-                t_no,
-                clean_empty_str(row.get('name_of_client')) or 'Unknown Client',
-                clean_empty_str(row.get('tender_status')) or 'Tender Received',
-                clean_empty_str(row.get('received_date')),
-                clean_empty_str(row.get('due_date')),
-                clean_empty_str(row.get('pre_bidding_date')),
-                float(row.get('tender_open_price') or 0.0),
-                float(row.get('quoted_value') or 0.0),
-                clean_empty_str(row.get('location')),
-                clean_empty_str(row.get('project_manager')),
-                fin_year,
-                clean_empty_str(row.get('emd')),
-                clean_empty_str(row.get('description')),
-                clean_empty_str(row.get('comments'))
-            ))
-            synced_count += 1
+                    fin_year = clean_empty_str(row.get('financial_year'))
+                    if not fin_year:
+                        fin_year = calculate_financial_year(row.get('received_date')) or calculate_financial_year(row.get('due_date')) or 'Unknown'
 
-        pg_conn.commit()
-        cur.close()
-        pg_conn.close()
+                    t_price_val = float(row.get('tender_open_price') or 0.0)
+                    q_price_val = float(row.get('quoted_value') or 0.0)
+                    t_price_str = str(t_price_val) if t_price_val > 0 else None
+                    q_price_str = str(q_price_val) if q_price_val > 0 else None
 
-        print(f"\n🎉 ALL DONE! Successfully extracted and synced {synced_count} unique records into Neon Cloud.")
+                    cur.execute("SELECT tender_no FROM tenders WHERE tender_no = %s", (t_no,))
+                    exists = cur.fetchone()
 
-    except Exception as e:
-        print(f"❌ Cloud sync error: {e}")
+                    if exists:
+                        cur.execute("""
+                            UPDATE tenders SET
+                                financial_year = COALESCE(%s, financial_year),
+                                tender_status = %s,
+                                tender_open_price = COALESCE(%s, tender_open_price),
+                                quoted_value = COALESCE(%s, quoted_value),
+                                project_manager = COALESCE(%s, project_manager),
+                                comments = COALESCE(%s, comments),
+                                due_date = COALESCE(%s, due_date)
+                            WHERE tender_no = %s;
+                        """, (
+                            fin_year,
+                            clean_empty_str(row.get('tender_status')) or 'Tender Received',
+                            t_price_str,
+                            q_price_str,
+                            clean_empty_str(row.get('project_manager')),
+                            clean_empty_str(row.get('comments')),
+                            clean_empty_str(row.get('due_date')),
+                            t_no
+                        ))
+                        batch_updated += 1
+                    else:
+                        cur.execute("""
+                            INSERT INTO tenders (
+                                tender_no, name_of_client, tender_status, 
+                                received_date, due_date, pre_bidding_date,
+                                tender_open_price, quoted_value, location, 
+                                project_manager, financial_year, emd, description, comments
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (
+                            t_no,
+                            clean_empty_str(row.get('name_of_client')) or 'Unknown Client',
+                            clean_empty_str(row.get('tender_status')) or 'Tender Received',
+                            clean_empty_str(row.get('received_date')),
+                            clean_empty_str(row.get('due_date')),
+                            clean_empty_str(row.get('pre_bidding_date')),
+                            t_price_str,
+                            q_price_str,
+                            clean_empty_str(row.get('location')),
+                            clean_empty_str(row.get('project_manager')),
+                            fin_year,
+                            clean_empty_str(row.get('emd')),
+                            clean_empty_str(row.get('description')),
+                            clean_empty_str(row.get('comments'))
+                        ))
+                        batch_inserted += 1
+
+                pg_conn.commit()
+                cur.close()
+                pg_conn.close()
+                
+                inserted_count += batch_inserted
+                updated_count += batch_updated
+                synced_count += len(batch_df)
+                
+                print(f"🔄 Progress: Synced {synced_count} out of {total_records} records...")
+                break # Success, break out of retry loop
+
+            except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+                print(f"⚠️ Connection dropped by Neon. Retrying batch... ({retries} retries left)")
+                retries -= 1
+                time.sleep(2)
+            except Exception as e:
+                print(f"❌ Unhandled error in batch: {e}")
+                break
+
+    print(f"\n🎉 ALL DONE! Synced {synced_count} records (Added: {inserted_count}, Updated: {updated_count}) into Neon Cloud.")
 
 if __name__ == "__main__":
     run_pipeline()
