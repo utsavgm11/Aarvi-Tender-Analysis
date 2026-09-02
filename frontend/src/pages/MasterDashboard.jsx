@@ -67,7 +67,7 @@ const MasterDashboard = () => {
     tender_open_price: '', quoted_value: '', description: '', 
     project_manager: '', emd: '', emd_status: 'Pending', 
     tender_fee_status: 'Pending', price_status: 'Pending', source: '', 
-    comments: '', docs_prepared_by: '', financial_year: '2023-2024', pre_bidding_date: '',
+    comments: '', docs_prepared_by: '', financial_year: '2025-2026', pre_bidding_date: '',
     aarvi_rank: '', reason_for_loss: '', post_bid_remarks: '',
     competitors: [{ rank: 'L1', company: '', amount: '', percent_diff: '' }]
   });
@@ -126,7 +126,7 @@ const MasterDashboard = () => {
       tender_open_price: '', quoted_value: '', description: '', 
       project_manager: '', emd: '', emd_status: 'Pending', 
       tender_fee_status: 'Pending', price_status: 'Pending', source: '', 
-      comments: '', docs_prepared_by: '', financial_year: '2023-2024', pre_bidding_date: '',
+      comments: '', docs_prepared_by: '', financial_year: '2025-2026', pre_bidding_date: '',
       aarvi_rank: '', reason_for_loss: '', post_bid_remarks: '',
       competitors: [{ rank: 'L1', company: '', amount: '', percent_diff: '' }]
     });
@@ -205,7 +205,7 @@ const MasterDashboard = () => {
   const handleSaveTender = async (e) => {
     e.preventDefault();
     
-    // 🎯 FIX: Safely strip commas from user input before sending to backend float fields
+    // 🎯 Safely strip commas from user input before sending to backend float fields
     const cleanNumber = (val) => {
       if (val === '' || val === null || val === undefined) return null;
       const parsed = parseFloat(String(val).replace(/,/g, ''));
@@ -291,7 +291,6 @@ const MasterDashboard = () => {
     return ''; 
   };
 
-  // 📅 UTILITY: Format Date to strictly DD-MM-YYYY
   const formatDisplayDate = (dateString) => {
     if (!dateString) return 'N/A';
     const date = new Date(dateString);
@@ -302,17 +301,50 @@ const MasterDashboard = () => {
     return `${day}-${month}-${year}`;
   };
 
-  // 🔍 Filter Logic (Client/Tender search + FY + Status Dropdown)
+  // 🔍 Filter Logic (Exact Search Match + Strict April 1 to March 31 Financial Year Filter)
   const sortedTenders = useMemo(() => {
-    const filtered = tenders.filter(t => {
-      const matchesSearch = t.name_of_client?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                            t.tender_no?.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesFY = selectedFY === 'All' || t.financial_year === selectedFY;
-      const matchesStatus = selectedStatus === 'All' || t.tender_status === selectedStatus;
-      return matchesSearch && matchesFY && matchesStatus;
-    });
+    return tenders.filter(t => {
+      // 1. Precise Search Matching (Tender No, Client Name, Description)
+      const term = searchTerm.toLowerCase().trim();
+      const matchesSearch = !term || 
+        t.name_of_client?.toLowerCase().includes(term) || 
+        t.tender_no?.toLowerCase().includes(term) ||
+        t.description?.toLowerCase().includes(term);
 
-    return filtered.sort((a, b) => {
+      // 2. Strict Financial Year Date Range (April 1 of Start Year -> March 31 of End Year)
+      let matchesFY = true;
+      if (selectedFY !== 'All') {
+        const parts = selectedFY.split('-');
+        if (parts.length === 2) {
+          let startYear = parseInt(parts[0], 10);
+          let endYear = parseInt(parts[1], 10);
+          if (endYear < 100) endYear += 2000;
+
+          const fyStart = new Date(`${startYear}-04-01T00:00:00`);
+          const fyEnd = new Date(`${endYear}-03-31T23:59:59`);
+
+          // Verify tender date falls within the 1 April to 31 March boundary
+          const targetDateStr = t.received_date || t.due_date;
+          if (targetDateStr) {
+            const tDate = new Date(targetDateStr);
+            if (!isNaN(tDate)) {
+              matchesFY = tDate >= fyStart && tDate <= fyEnd;
+            } else {
+              matchesFY = t.financial_year === selectedFY;
+            }
+          } else {
+            matchesFY = t.financial_year === selectedFY;
+          }
+        } else {
+          matchesFY = t.financial_year === selectedFY;
+        }
+      }
+
+      // 3. Status Filter
+      const matchesStatus = selectedStatus === 'All' || t.tender_status === selectedStatus;
+
+      return matchesSearch && matchesFY && matchesStatus;
+    }).sort((a, b) => {
       const dateA = a.due_date ? new Date(a.due_date) : new Date('9999-12-31');
       const dateB = b.due_date ? new Date(b.due_date) : new Date('9999-12-31');
       const isAActive = dateA >= today;
@@ -348,7 +380,7 @@ const MasterDashboard = () => {
         let val = row[col.key];
         if (val === null || val === undefined) val = '';
         if (typeof val === 'string') {
-          val = val.replace(/"/g, '""'); // Escape inner double quotes
+          val = val.replace(/"/g, '""');
         }
         return `"${val}"`;
       }).join(',');
@@ -388,7 +420,6 @@ const MasterDashboard = () => {
   if (loading && tenders.length === 0) return <div className="p-20 text-center font-bold text-slate-400">Loading Database...</div>;
 
   return (
-    // 🎯 FIX: Wrapped the entire dashboard in a strictly constrained flex container to enforce exact alignment boundaries
     <div className="relative p-4 sm:p-6 md:p-8 h-full w-full flex-1 bg-slate-50 overflow-y-auto">
       <div className="max-w-[1600px] mx-auto w-full flex flex-col">
         
@@ -410,6 +441,7 @@ const MasterDashboard = () => {
               <input 
                 className="w-full pl-10 pr-4 py-2.5 sm:py-2 rounded-xl border outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm sm:text-base bg-white" 
                 placeholder="Search Client or Tender..." 
+                value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)} 
               />
             </div>
@@ -452,7 +484,6 @@ const MasterDashboard = () => {
         </div>
 
         {/* 📋 Data Table Container */}
-        {/* 🎯 FIX: Added overflow-hidden to the wrapper and table-fixed to the table to force absolute uniform column edges */}
         <div className="bg-white rounded-xl sm:rounded-2xl border shadow-sm w-full overflow-hidden">
           <div className="overflow-x-auto custom-scrollbar w-full">
             <table className="w-full text-left min-w-[900px] table-fixed">
@@ -573,7 +604,6 @@ const MasterDashboard = () => {
                       <SelectField label="Tender Fee Status" name="tender_fee_status" value={formData.tender_fee_status} onChange={handleChange} options={['Pending', 'Paid', 'Exempted']} />
                       <InputField label="Source (Portal/Email)" name="source" value={formData.source} onChange={handleChange} />
                       
-                      {/* 📄 Upload Tender Summary PDF/Word Field */}
                       <div>
                         <label className="block text-[10px] sm:text-[11px] uppercase font-bold text-slate-500 mb-1.5 sm:mb-2">Upload Tender Summary (PDF/Word)</label>
                         <input 
@@ -820,7 +850,6 @@ const MasterDashboard = () => {
             <h3 className="text-xl font-black text-slate-800 mb-1">Custom Export Columns</h3>
             <p className="text-xs text-slate-500 mb-4">Select the specific fields you want included in your downloadable CSV report ({sortedTenders.length} rows matched).</p>
 
-            {/* Quick Toggle Controls */}
             <div className="flex justify-between items-center bg-slate-50 p-3 rounded-xl mb-4 border border-slate-100">
               <span className="text-xs font-bold text-slate-600">{selectedColumns.length} of {ALL_EXPORT_COLUMNS.length} Selected</span>
               <div className="flex gap-2 text-xs font-bold">
@@ -830,7 +859,6 @@ const MasterDashboard = () => {
               </div>
             </div>
 
-            {/* Column Checkbox Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-2 gap-2 max-h-60 overflow-y-auto custom-scrollbar p-1 mb-6 border border-slate-100 rounded-xl">
               {ALL_EXPORT_COLUMNS.map(col => (
                 <label key={col.key} className="flex items-center gap-2 p-2 hover:bg-indigo-50/50 rounded-lg cursor-pointer text-xs font-medium text-slate-700 transition-colors">
@@ -845,7 +873,6 @@ const MasterDashboard = () => {
               ))}
             </div>
 
-            {/* Action Buttons */}
             <div className="flex justify-end gap-3 pt-2 border-t border-slate-100">
               <button type="button" onClick={() => setIsExportModalOpen(false)} className="px-5 py-2.5 font-bold text-slate-500 bg-slate-50 hover:bg-slate-100 rounded-xl transition-colors text-xs">
                 Cancel
