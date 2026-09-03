@@ -278,7 +278,11 @@ const MasterDashboard = () => {
   }, []);
 
   const availableFYs = useMemo(() => {
-    const years = [...new Set(tenders.map(t => t.financial_year))].filter(Boolean);
+    // Generate clean unique list for dropdown to avoid duplicates like "2025-2026" and "2025 - 2026"
+    const years = [...new Set(tenders.map(t => {
+      if (!t.financial_year) return null;
+      return String(t.financial_year).replace(/\s+/g, '').trim();
+    }))].filter(Boolean);
     return ['All', ...years.sort().reverse()];
   }, [tenders]);
 
@@ -301,46 +305,22 @@ const MasterDashboard = () => {
     return `${day}-${month}-${year}`;
   };
 
-  // 🔍 Filter Logic (Exact Search Match + Strict April 1 to March 31 Financial Year Filter)
+  // 🔍 FIXED: Pure String Match Filter Logic
   const sortedTenders = useMemo(() => {
     return tenders.filter(t => {
-      // 1. Precise Search Matching (Tender No, Client Name, Description)
+      // 1. Search Box Match
       const term = searchTerm.toLowerCase().trim();
       const matchesSearch = !term || 
         t.name_of_client?.toLowerCase().includes(term) || 
         t.tender_no?.toLowerCase().includes(term) ||
         t.description?.toLowerCase().includes(term);
 
-      // 2. Strict Financial Year Date Range (April 1 of Start Year -> March 31 of End Year)
-      let matchesFY = true;
-      if (selectedFY !== 'All') {
-        const parts = selectedFY.split('-');
-        if (parts.length === 2) {
-          let startYear = parseInt(parts[0], 10);
-          let endYear = parseInt(parts[1], 10);
-          if (endYear < 100) endYear += 2000;
+      // 2. Strict Financial Year Exact String Match (Ignores extra spaces)
+      const cleanTenderFY = t.financial_year ? String(t.financial_year).replace(/\s+/g, '').trim() : '';
+      const cleanSelectedFY = String(selectedFY).replace(/\s+/g, '').trim();
+      const matchesFY = selectedFY === 'All' || cleanTenderFY === cleanSelectedFY;
 
-          const fyStart = new Date(`${startYear}-04-01T00:00:00`);
-          const fyEnd = new Date(`${endYear}-03-31T23:59:59`);
-
-          // Verify tender date falls within the 1 April to 31 March boundary
-          const targetDateStr = t.received_date || t.due_date;
-          if (targetDateStr) {
-            const tDate = new Date(targetDateStr);
-            if (!isNaN(tDate)) {
-              matchesFY = tDate >= fyStart && tDate <= fyEnd;
-            } else {
-              matchesFY = t.financial_year === selectedFY;
-            }
-          } else {
-            matchesFY = t.financial_year === selectedFY;
-          }
-        } else {
-          matchesFY = t.financial_year === selectedFY;
-        }
-      }
-
-      // 3. Status Filter
+      // 3. Status Match
       const matchesStatus = selectedStatus === 'All' || t.tender_status === selectedStatus;
 
       return matchesSearch && matchesFY && matchesStatus;
@@ -380,7 +360,7 @@ const MasterDashboard = () => {
         let val = row[col.key];
         if (val === null || val === undefined) val = '';
         if (typeof val === 'string') {
-          val = val.replace(/"/g, '""');
+          val = val.replace(/"/g, '""'); 
         }
         return `"${val}"`;
       }).join(',');
@@ -498,7 +478,7 @@ const MasterDashboard = () => {
                   <th className="p-3 sm:p-4 whitespace-nowrap text-center w-[8%]">Action</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody key={`${selectedFY}-${selectedStatus}-${searchTerm}`} className="animate-in fade-in slide-in-from-bottom-4 duration-500">
                 {sortedTenders.length === 0 ? (
                   <tr>
                     <td colSpan="7" className="p-8 text-center text-slate-400 italic">No tenders match your search criteria.</td>
