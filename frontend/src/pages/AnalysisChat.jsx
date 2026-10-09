@@ -23,7 +23,7 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
   const pollingInterval = useRef(null);
-
+  
   // Prevents the history fetch from wiping the screen during an upload
   const isOperationActive = useRef(false);
 
@@ -35,7 +35,6 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
   // Fetch History
   useEffect(() => {
     if (isOperationActive.current) return;
-
     if (currentSessionId) {
       setIsLoading(true);
       axios.get(`${API_BASE_URL}/chats/history/${currentSessionId}`)
@@ -65,11 +64,9 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
   const persistMessage = async (sessionId, role, content, title = null) => {
     try {
       const userEmail = getCleanUserEmail();
-
       const contentStr = typeof content === 'object' 
         ? JSON.stringify({ isTenderResult: true, data: content }) 
         : content;
-
       await axios.post(`${API_BASE_URL}/chats/message`, {
         session_id: sessionId,
         role: role,
@@ -77,7 +74,6 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
         title: title,
         user_email: userEmail
       });
-
       // 🎯 FIX 2: Trigger immediate sidebar refresh so the new chat shows up instantly
       window.dispatchEvent(new Event('refresh-sidebar'));
       if (onChatUpdated) onChatUpdated(); 
@@ -89,53 +85,59 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
   const handleFileUpload = async (event) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
-
     isOperationActive.current = true;
-
+    
     let sid = currentSessionId;
     if (!sid) {
       sid = uuidv4();
       onSessionSelect(sid);
     }
-
+    
     const fileNames = Array.from(files).map(f => f.name).join(', ');
     const userMsg = `📄 Uploading ${files.length} file(s): ${fileNames}`;
     
     setMessages(prev => [...prev, { type: 'user', text: userMsg }]);
     setIsLoading(true);
-
+    
     // 🎯 FIX 3: Save initial user upload message immediately to open database session
     await persistMessage(sid, 'user', userMsg, `Analysis: ${files[0].name.substring(0, 25)}`);
-
+    
     const taskId = `task_${uuidv4()}`;
-    setProgress({ current: 0, total: 100 }); 
-
+    
+    // Initialize rich progress state
+    setProgress({
+      currentFileIndex: 1,
+      totalFiles: files.length,
+      currentFilename: files[0].name,
+      stage: "Uploading to server...",
+      fileProgressPct: 0,
+      overallProgressPct: 0
+    });
+    
     const userEmail = getCleanUserEmail();
-
     const formData = new FormData();
     formData.append('task_id', taskId);
     formData.append('user_email', userEmail);
-
     for (let i = 0; i < files.length; i++) {
       formData.append('files', files[i]);
     }
-
+    
     try {
       const uploadRes = await axios.post(`${API_BASE_URL}/analyze-tender`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-
+      
       if (uploadRes.data.error) {
         throw new Error(uploadRes.data.error);
       }
-
+      
       pollingInterval.current = setInterval(async () => {
         try {
           const res = await axios.get(`${API_BASE_URL}/progress/${taskId}`);
           
           if (res.data.status === "completed") {
             clearInterval(pollingInterval.current);
-            const tenderData = res.data.result.aarvi_intelligence;
+            const tenderData = res.data.result?.aarvi_intelligence || res.data.aarvi_intelligence;
             
             if (tenderData) {
               setActiveTender(tenderData);
@@ -145,7 +147,6 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
               const sessionTitle = (tenderData.tender_no && tenderData.tender_no !== "Not Specified")
                 ? `${tenderData.tender_no} - ${tenderData.client_name || 'Analysis'}`
                 : (tenderData.client_name || "Tender Analysis");
-
               await persistMessage(sid, 'ai', tenderData, sessionTitle);
             }
             
@@ -158,14 +159,21 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
             clearInterval(pollingInterval.current);
             throw new Error(res.data.error);
             
-          } else if (res.data.total > 0) {
-            setProgress({ current: res.data.current, total: res.data.total });
+          } else if (res.data.status === "processing" || res.data.current_filename) {
+            // Update UI with rich multi-file progress
+            setProgress({
+              currentFileIndex: res.data.current_file_index || 1,
+              totalFiles: res.data.total_files || files.length,
+              currentFilename: res.data.current_filename || "Processing...",
+              stage: res.data.stage || "Extracting content...",
+              fileProgressPct: res.data.file_progress_pct || 0,
+              overallProgressPct: res.data.overall_progress_pct || 0
+            });
           }
         } catch (pollErr) {
           console.log("Polling check missed, retrying next cycle...");
         }
-      }, 3000);
-
+      }, 2000);
     } catch (e) {
       const errorText = `Analysis failed: ${e.response?.data?.detail || e.message}`;
       setMessages(prev => [...prev, { type: 'ai', text: errorText }]);
@@ -187,12 +195,12 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
       isNewSession = true;
       onSessionSelect(sid);
     }
-
+    
     const userQuery = input;
     setMessages(prev => [...prev, { type: 'user', text: userQuery }]);
     setInput('');
     setIsLoading(true);
-
+    
     // 🎯 FIX 5: Auto-generate title if this is the start of a session
     let chatTitle = null;
     if (isNewSession || messages.length <= 1) {
@@ -203,11 +211,10 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
         chatTitle = userQuery.substring(0, 30);
       }
     }
-
+    
     await persistMessage(sid, 'user', userQuery, chatTitle);
-
     const userEmail = getCleanUserEmail();
-
+    
     try {
       const response = await axios.post(`${API_BASE_URL}/chat/`, { 
         query: userQuery,
@@ -241,7 +248,7 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
           </span>
         </div>
       )}
-
+      
       <div className="flex-1 overflow-y-auto p-3 sm:p-4 md:p-6 space-y-4 sm:space-y-6 custom-scrollbar">
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.type === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -262,37 +269,64 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
           </div>
         ))}
         
+        {/* NEW MODERN MULTI-FILE PROGRESS DASHBOARD */}
         {isLoading && (
-          <div className="flex justify-start my-4">
+          <div className="flex justify-start my-4 w-full">
             {progress ? (
-              <div className="w-full max-w-2xl bg-indigo-50 border border-indigo-100 p-3 sm:p-5 rounded-xl sm:rounded-2xl flex flex-col md:flex-row items-center justify-between gap-3 sm:gap-4 shadow-sm animate-pulse ml-0 sm:ml-10 md:ml-12">
-                <div className="flex items-center gap-2 sm:gap-3">
-                  <Loader2 className="animate-spin text-indigo-600 shrink-0" size={18} />
-                  <span className="text-indigo-900 font-bold text-xs sm:text-sm tracking-wide uppercase text-center sm:text-left">AI Engine Scanning Document...</span>
-                </div>
-                <div className="flex-1 w-full mx-0 sm:mx-4">
-                  <div className="h-2 sm:h-2.5 bg-indigo-200 rounded-full overflow-hidden">
-                    <div 
-                      className="bg-indigo-600 h-full transition-all duration-300 ease-out" 
-                      style={{ width: `${(progress.current / progress.total) * 100}%` }}
-                    ></div>
+              <div className="w-full max-w-2xl bg-white border border-slate-200 p-4 sm:p-5 rounded-2xl shadow-lg transition-all duration-300 ml-0 sm:ml-10 md:ml-12">
+                
+                {/* Header: File Badge & Counter */}
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg shrink-0">
+                      <Loader2 className="animate-spin" size={18} />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">Parsing Document Package</p>
+                      <h4 className="text-sm font-bold text-slate-800 truncate max-w-xs sm:max-w-md">
+                        {progress.currentFilename}
+                      </h4>
+                    </div>
                   </div>
+                  <span className="px-2.5 py-1 bg-blue-50 text-blue-700 font-bold text-xs rounded-full border border-blue-100 shrink-0">
+                    File {progress.currentFileIndex} of {progress.totalFiles}
+                  </span>
                 </div>
-                <span className="text-indigo-700 font-black text-xs sm:text-sm shrink-0">
-                  Pages ({progress.current}/{progress.total})
-                </span>
+
+                {/* Status Stage Text */}
+                <div className="flex items-center justify-between text-xs text-slate-600 font-medium mb-1.5">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                    {progress.stage}
+                  </span>
+                  <span className="font-bold text-slate-700">{progress.overallProgressPct}% Complete</span>
+                </div>
+
+                {/* Master Progress Bar */}
+                <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden shadow-inner mb-3">
+                  <div 
+                    className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 transition-all duration-300 ease-out rounded-full" 
+                    style={{ width: `${Math.max(2, progress.overallProgressPct)}%` }}
+                  />
+                </div>
+
+                {/* Active File Progress Track */}
+                <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-50">
+                  <span>Active File Progress:</span>
+                  <span className="font-semibold text-slate-600">{progress.fileProgressPct}%</span>
+                </div>
               </div>
             ) : (
-              <div className="flex items-center gap-2 sm:gap-3 text-slate-400 animate-pulse text-xs sm:text-sm ml-0 sm:ml-10 md:ml-12">
-                <Loader2 size={14} className="animate-spin sm:w-[16px] sm:h-[16px]" />
-                Strategic Consultant is thinking...
+              <div className="flex items-center gap-3 bg-white px-4 py-3 rounded-xl border shadow-sm text-slate-600 text-xs sm:text-sm ml-0 sm:ml-10 md:ml-12 animate-pulse">
+                <Loader2 size={16} className="animate-spin text-blue-600" />
+                Preparing strategic tender analyzer...
               </div>
             )}
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
-
+      
       {/* Input section */}
       <div className="p-2 sm:p-4 bg-white border-t shrink-0">
         <div className="max-w-4xl mx-auto flex items-center gap-1.5 sm:gap-2 bg-slate-100 rounded-xl sm:rounded-2xl p-1 sm:p-1.5 border focus-within:border-blue-400 transition-all">
@@ -303,7 +337,7 @@ const AnalysisChat = ({ currentSessionId, onSessionSelect, onChatUpdated }) => {
               className="hidden" 
               ref={fileInputRef} 
               onChange={handleFileUpload} 
-              accept=".pdf,.doc,.docx" 
+              accept=".pdf,.doc,.docx,.xls,.xlsx" 
               multiple 
             />
           </label>

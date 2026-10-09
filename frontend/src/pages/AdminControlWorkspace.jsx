@@ -12,14 +12,14 @@ const API_BASE_URL = (import.meta.env.VITE_API_URL || "https://attract-appeals-r
 
 const AdminControlWorkspace = () => {
   const [users, setUsers] = useState([]);
-  const [logs, setLogs] = useState([]); // 📊 Stores the raw backend tracking array
+  const [logs, setLogs] = useState([]); 
   const [loading, setLoading] = useState(true);
   
   // UI Controls
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState('add'); 
   const [searchTerm, setSearchTerm] = useState('');
-  const [timeFilter, setTimeFilter] = useState('month'); // today | week | month | all
+  const [timeFilter, setTimeFilter] = useState('month'); 
 
   // Integrated Form Fields State Layout
   const [formData, setFormData] = useState({
@@ -34,8 +34,6 @@ const AdminControlWorkspace = () => {
   const fetchAdminData = async () => {
     try {
       setLoading(true);
-
-      // Task 1: Fetch Accounts Data
       try {
         const usersRes = await axios.get(`${API_BASE_URL}/api/users`, { 
           params: { admin_email: adminEmail } 
@@ -45,7 +43,6 @@ const AdminControlWorkspace = () => {
         console.error("User Directory Data Fetch Blocked:", userErr);
       }
 
-      // Task 2: Fetch Raw Timeline Analytics
       try {
         const usageRes = await axios.get(`${API_BASE_URL}/api/usage-analytics`, { 
           params: { admin_email: adminEmail } 
@@ -54,7 +51,6 @@ const AdminControlWorkspace = () => {
       } catch (usageErr) {
         console.warn("Analytics Engine Offline or Route Missing.");
       }
-
     } catch (err) {
       console.error("Administrative Synchronizer Exception Error:", err);
     } finally {
@@ -90,7 +86,6 @@ const AdminControlWorkspace = () => {
   const handleSaveUser = async (e) => {
     e.preventDefault();
     setLoading(true);
-
     try {
       if (modalMode === 'add') {
         await axios.post(`${API_BASE_URL}/api/users?admin_email=${encodeURIComponent(adminEmail)}`, {
@@ -133,7 +128,6 @@ const AdminControlWorkspace = () => {
     }
   };
 
-  // 🧠 DATA COMPUTE ENGINE: User Grid Filter
   const filteredUsers = useMemo(() => {
     return users.filter(u => 
       u.email?.toLowerCase().includes(searchTerm.toLowerCase()) || 
@@ -141,11 +135,9 @@ const AdminControlWorkspace = () => {
     );
   }, [users, searchTerm]);
 
-  // 🧠 DATA COMPUTE ENGINE: Dynamic Analytics Timeline Filter
   const filteredLogs = useMemo(() => {
     const now = new Date();
-    let startDate = new Date(0); // Default to all time
-
+    let startDate = new Date(0); 
     if (timeFilter === 'today') {
       startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     } else if (timeFilter === 'week') {
@@ -153,11 +145,9 @@ const AdminControlWorkspace = () => {
     } else if (timeFilter === 'month') {
       startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
     }
-
     return logs.filter(log => {
       const logDate = new Date(log.usage_date);
       const matchesTime = logDate >= startDate;
-      // Search syncs seamlessly with both User Email AND Tender Numbers
       const matchesSearch = 
         log.user_email?.toLowerCase().includes(searchTerm.toLowerCase()) || 
         log.tender_no?.toLowerCase().includes(searchTerm.toLowerCase());
@@ -166,42 +156,44 @@ const AdminControlWorkspace = () => {
     });
   }, [logs, timeFilter, searchTerm]);
 
-  // 🧠 DATA COMPUTE ENGINE: Aggregation & Leaderboard Math
   const analyticsStats = useMemo(() => {
     let totalCost = 0;
     let scansCount = 0;
     let chatsCount = 0;
     const userTotals = {};
-
     filteredLogs.forEach(log => {
       const cost = parseFloat(log.cost_inr) || 0;
       totalCost += cost;
-
       if (log.action_type?.toLowerCase().includes('scan')) scansCount++;
       if (log.action_type?.toLowerCase().includes('chat')) chatsCount++;
-
       const email = log.user_email || 'Unknown';
       userTotals[email] = (userTotals[email] || 0) + cost;
     });
-
     const leaderboard = Object.entries(userTotals)
       .map(([email, cost]) => ({ email, cost }))
       .sort((a, b) => b.cost - a.cost);
-
     return { totalCost, scansCount, chatsCount, leaderboard };
   }, [filteredLogs]);
 
-  // UI Helpers
+  // 🎯 FIX: Force accurate parsing of IST timestamp strings from backend
   const formatDate = (dateString) => {
     if (!dateString) return "Unknown Time";
-    const d = new Date(dateString);
-    return `${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}, ${d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+    try {
+      // Safely split DB string to prevent browser UTC auto-shifting
+      const parts = dateString.split(/[- :T]/);
+      if (parts.length >= 5) {
+        const d = new Date(parts[0], parts[1]-1, parts[2], parts[3], parts[4]);
+        return `${d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}, ${d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} IST`;
+      }
+      return `${dateString} IST`;
+    } catch {
+      return `${dateString} IST`;
+    }
   };
 
   return (
     <div className="p-6 md:p-10 h-full bg-slate-50 overflow-y-auto font-sans">
       
-      {/* 🚀 UPPER CONTROL DECK */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
         <div>
           <h1 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3">
@@ -221,7 +213,6 @@ const AdminControlWorkspace = () => {
         </button>
       </div>
 
-      {/* 👤 MAIN USER DATAGRID */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xl shadow-slate-100/50 overflow-hidden animate-in fade-in duration-300 mb-12">
         <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4">
           <div className="relative flex-1 max-w-md">
@@ -242,7 +233,6 @@ const AdminControlWorkspace = () => {
           </button>
         </div>
 
-        {/* 🎯 FIX APPLIED HERE: Added max-h-[320px] and overflow-y-auto */}
         <div className="overflow-x-auto overflow-y-auto max-h-[320px]">
           <table className="w-full text-left border-collapse">
             <thead className="sticky top-0 z-10">
@@ -305,13 +295,11 @@ const AdminControlWorkspace = () => {
 
       <hr className="border-slate-200/60 mb-10" />
 
-      {/* 📊 NEW LAYER 1: HIGH OCTANE ANALYTICS HEADER & STAT CARDS */}
       <div className="mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <h2 className="text-xl font-black text-slate-900 flex items-center gap-2">
           <Activity className="text-indigo-600" size={24} /> Infrastructure Utilization
         </h2>
         
-        {/* Dynamic Timeline Filter Strip */}
         <div className="flex bg-white border border-slate-200 rounded-xl p-1 shadow-sm">
           {['today', 'week', 'month', 'all'].map((filter) => (
             <button
@@ -330,7 +318,6 @@ const AdminControlWorkspace = () => {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        {/* Stat Card: Total Cost */}
         <div className="bg-white p-6 rounded-2xl border-l-4 border-l-emerald-500 border border-slate-200 shadow-xl shadow-slate-100/50">
           <div className="flex justify-between items-start">
             <div>
@@ -340,8 +327,6 @@ const AdminControlWorkspace = () => {
             <div className="p-3 bg-emerald-50 rounded-xl text-emerald-600"><IndianRupee size={22} /></div>
           </div>
         </div>
-
-        {/* Stat Card: Scan Volume */}
         <div className="bg-white p-6 rounded-2xl border-l-4 border-l-indigo-500 border border-slate-200 shadow-xl shadow-slate-100/50">
           <div className="flex justify-between items-start">
             <div>
@@ -351,8 +336,6 @@ const AdminControlWorkspace = () => {
             <div className="p-3 bg-indigo-50 rounded-xl text-indigo-600"><FileText size={22} /></div>
           </div>
         </div>
-
-        {/* Stat Card: Chat Volume */}
         <div className="bg-white p-6 rounded-2xl border-l-4 border-l-slate-800 border border-slate-200 shadow-xl shadow-slate-100/50">
           <div className="flex justify-between items-start">
             <div>
@@ -364,10 +347,8 @@ const AdminControlWorkspace = () => {
         </div>
       </div>
 
-      {/* 🧾 NEW LAYER 2: 70/30 SPLIT OPERATIONS PANEL */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         
-        {/* Left Column (70%): The Raw Ledger */}
         <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-xl shadow-slate-100/50 overflow-hidden flex flex-col">
           <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
             <div>
@@ -382,10 +363,10 @@ const AdminControlWorkspace = () => {
             <table className="w-full text-left border-collapse">
               <thead className="sticky top-0 bg-slate-900 z-10">
                 <tr className="text-slate-300 text-[10px] font-black uppercase tracking-widest">
-                  <th className="p-4 pl-6">Timestamp</th>
+                  <th className="p-4 pl-6">Timestamp (IST)</th>
                   <th className="p-4">Employee Identity</th>
                   <th className="p-4">Context Badge</th>
-                  <th className="p-4 text-right pr-6">Cost Impact</th>
+                  <th className="p-4 text-right pr-6">Total Session Cost</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
@@ -427,7 +408,6 @@ const AdminControlWorkspace = () => {
           </div>
         </div>
 
-        {/* Right Column (30%): Employee Summary Leaderboard */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-xl shadow-slate-100/50 overflow-hidden flex flex-col max-h-[530px]">
           <div className="p-5 border-b border-slate-100 bg-slate-50/50">
             <h3 className="font-black text-slate-900 tracking-tight flex items-center gap-2 text-lg">
@@ -458,10 +438,8 @@ const AdminControlWorkspace = () => {
             )}
           </div>
         </div>
-
       </div>
 
-      {/* 👑 CREDENTIALS FORM POPUP MODAL OVERLAY PANEL */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white p-8 rounded-3xl w-full max-w-md shadow-2xl border border-slate-100 flex flex-col animate-in zoom-in-95 duration-200">
@@ -473,7 +451,6 @@ const AdminControlWorkspace = () => {
                 <X size={20}/>
               </button>
             </div>
-
             <form onSubmit={handleSaveUser} className="space-y-5">
               <div>
                 <label className="block text-[11px] uppercase font-black tracking-widest text-slate-500 mb-2">System Handle Email</label>
@@ -483,7 +460,6 @@ const AdminControlWorkspace = () => {
                   className="w-full p-3.5 border border-slate-200 rounded-xl outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-600 bg-white text-sm font-medium transition-all disabled:bg-slate-50 disabled:text-slate-400 disabled:cursor-not-allowed"
                 />
               </div>
-
               <div>
                 <label className="block text-[11px] uppercase font-black tracking-widest text-slate-500 mb-2">
                   {modalMode === 'add' ? 'Security Access Code (Password) *' : 'Override Crypt Token (Optional)'}
@@ -494,7 +470,6 @@ const AdminControlWorkspace = () => {
                   className="w-full p-3.5 border border-slate-200 rounded-xl outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-600 bg-white text-sm font-medium transition-all font-mono"
                 />
               </div>
-
               <div>
                 <label className="block text-[11px] uppercase font-black tracking-widest text-slate-500 mb-2">Clearance Authorization Scope</label>
                 <select 
@@ -505,7 +480,6 @@ const AdminControlWorkspace = () => {
                   <option value="admin">System Administrator (Full Infrastructure Access)</option>
                 </select>
               </div>
-
               <div className="pt-6 mt-4 border-t border-slate-100 flex justify-end gap-3">
                 <button type="button" onClick={() => setIsModalOpen(false)} className="px-5 py-2.5 font-bold text-slate-500 hover:bg-slate-100 hover:text-slate-700 rounded-xl text-sm transition-all">
                   Cancel
@@ -518,9 +492,7 @@ const AdminControlWorkspace = () => {
           </div>
         </div>
       )}
-
     </div>
   );
 };
-
 export default AdminControlWorkspace;

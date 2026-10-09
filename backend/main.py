@@ -22,49 +22,40 @@ from ai_service import (
     chat_with_tender,
     generate_chat_title
 )
-# 🎯 FIX: Import the new disk streaming function instead of the RAM extractor
 from file_parser import append_text_to_disk_stream
 
 # ----------------- APP & FILE STORAGE SETUP -----------------
-# Ensure the uploads directory exists before mounting
 os.makedirs("uploads", exist_ok=True)
-
 app = FastAPI()
 
-# Mount the uploads folder so files can be accessed via URL
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # ----------------- LIVE OCR PROGRESS STORE -----------------
 progress_store = {}
 result_store = {}
 
-# ----------------- CORS (UPDATED FOR PRODUCTION) -----------------
+# ----------------- CORS -----------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 👈 This gives global permission to Vercel and your local testing setups!
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ----------------- DATABASE (UPDATED FOR PRODUCTION) -----------------
+# ----------------- DATABASE CONNECTION -----------------
 def get_db_connection():
     try:
-        # 🎯 Pull strictly from your .env file or hosting environment variables
         db_url = os.getenv("DATABASE_URL")
         
-        # Safety fallback check: If the environment variable is completely empty
         if not db_url:
             print("❌ Database Connection Error: DATABASE_URL is missing from environment!")
             return None
             
-        # CRITICAL FIX: If your local machine has an old "sqlite" URL stuck in memory,
-        # this safely flags it out so it doesn't crash the psycopg2 engine.
         if db_url.startswith("sqlite"):
             print("⚠️ Warning: Detected an invalid SQLite string in DATABASE_URL environment.")
             return None
             
-        # Establish a clean dictionary-mapped connection to the cloud
         conn = psycopg2.connect(db_url, cursor_factory=RealDictCursor)
         return conn
         
@@ -72,11 +63,10 @@ def get_db_connection():
         print(f"❌ Database Connection Error: {e}")
         return None
 
-# 🎯 NEW FIX: Helper function to prevent PostgreSQL crashes on empty strings
 def clean_empty(val):
     return None if val in ["", "null", "None", None] else val
 
-# ----------------- NEW: USAGE LOGGING HELPER -----------------
+# ----------------- USAGE LOGGING HELPER -----------------
 def log_system_ai_usage(user_email: str, action_type: str, tender_no: str, input_tokens: int, output_tokens: int, estimated_cost: float):
     conn = get_db_connection()
     if not conn:
@@ -88,10 +78,10 @@ def log_system_ai_usage(user_email: str, action_type: str, tender_no: str, input
         
         print(f"⚙️ [DB DEBUG] Attempting insert into table for User: {user_email}, Tender: {tender_no}")
         
-        # 🎯 FIX: We removed 'id' from the INSERT. PostgreSQL will auto-increment its own integer id!
+        # 🎯 FIX: Force IST Timestamp for Analytics Logging
         cur.execute("""
             INSERT INTO ai_usage_logs (user_email, action_type, tender_no, input_tokens, output_tokens, estimated_cost_inr, usage_date)
-            VALUES (%s, %s, %s, %s, %s, %s, CURRENT_DATE);
+            VALUES (%s, %s, %s, %s, %s, %s, (NOW() AT TIME ZONE 'Asia/Kolkata'));
         """, (
             user_email.lower().strip(),  
             action_type,                 
@@ -108,7 +98,6 @@ def log_system_ai_usage(user_email: str, action_type: str, tender_no: str, input
         if conn: conn.close()
 
 # ----------------- MODELS -----------------
-# Auth Models
 class AuthRequest(BaseModel):
     email: str
     password: str    
@@ -150,7 +139,7 @@ class ChatRequest(BaseModel):
     query: str
     context: dict
     full_text: Optional[str] = ""
-    user_email: str # ✅ Added to track chat costs
+    user_email: str
 
 class SaveMessage(BaseModel):
     session_id: str
@@ -180,13 +169,11 @@ class FullPostBidPayload(BaseModel):
     post_bid_remarks: Optional[str] = "No Remarks"
     competitors: List[CompetitorEntry]
 
-# Setup Password Hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # ----------------- STARTUP -----------------
 @app.on_event("startup")
 def on_startup():
-    # Detect if we are on Render via the PORT env var
     port = os.getenv("PORT", "8001")
     print("\n==============================================")
     print("   AARVI ENCON TENDER SYSTEM ONLINE")
@@ -195,15 +182,12 @@ def on_startup():
     print("   OCR ENGINE: TESSERACT")
     print("   AI ENGINE: GEMINI FLASH")
     print("==============================================\n")
-
-    # DB AUTO-MIGRATION
+    
     conn = get_db_connection()
     if conn:
         try:
             cur = conn.cursor()
             cur.execute("ALTER TABLE tenders ADD COLUMN IF NOT EXISTS summary_file_url TEXT;")
-            
-            # ✅ FIX: Added auto-migration for the missing user_email column in chat_sessions
             cur.execute("ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS user_email TEXT;")
             cur.execute("ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
             
@@ -226,7 +210,7 @@ async def health_check():
 # ----------------- OCR PROGRESS & RESULT POLLING -----------------
 @app.get("/progress/{task_id}")
 async def get_progress(task_id: str):
-    # 1. Check if the AI has finished the background task
+    # 1. Check if background AI worker completed or threw an error
     if task_id in result_store:
         task_info = result_store[task_id]
         if task_info["status"] == "completed":
@@ -234,74 +218,85 @@ async def get_progress(task_id: str):
             del result_store[task_id] 
             return {"status": "completed", "result": data}
         elif task_info["status"] == "error":
-            return {"status": "error", "error": task_info["error"]}
+            err = task_info.get("error", "Unknown error encountered")
+            del result_store[task_id]
+            return {"status": "error", "error": err}
             
-    # 2. If not finished, return current OCR page processing status
-    return progress_store.get(task_id, {
+    # 2. Return live processing progress
+    prog = progress_store.get(task_id)
+    if prog:
+        return prog
+
+    return {
         "current": 0,
         "total": 1,
-        "status": "processing"
-    })
+        "status": "processing",
+        "stage": "Initializing analysis..."
+    }
 
-# ----------------- BACKGROUND AI WORKER (UPDATED FOR DISK STREAMING) -----------------
+# ----------------- BACKGROUND AI WORKER -----------------
 async def run_analysis_background(files_data: list, task_id: str, user_email: str):
-    """Runs completely in the background, streaming text to disk to prevent RAM crashes."""
+    """Runs in background, streaming text to disk and broadcasting multi-file progress."""
     stream_file_path = f"stream_{task_id}.txt"
     try:
-        from file_parser import append_text_to_disk_stream
-        
-        # Clean up any leftover files from failed runs
         if os.path.exists(stream_file_path):
             os.remove(stream_file_path)
-
-        for file_name, file_bytes in files_data:
-            # 🎯 FIX: Append text directly to the hard drive in batches
+            
+        total_files = len(files_data)
+        for idx, (file_name, file_bytes) in enumerate(files_data):
+            file_num = idx + 1
             await asyncio.to_thread(
                 append_text_to_disk_stream, 
                 file_bytes, 
                 file_name, 
                 stream_file_path, 
-                task_id
+                task_id,
+                file_num,
+                total_files
             )
             
         if not os.path.exists(stream_file_path) or os.path.getsize(stream_file_path) == 0:
             result_store[task_id] = {"status": "error", "error": "Could not extract text from uploaded files."}
             return
-            
-        # 🎯 FIX: Pass the file path (not a massive string) to ai_service
+
+        # Notify UI of transition to Gemini AI reasoning
+        progress_store[task_id] = {
+            "current": total_files,
+            "total": total_files,
+            "current_file_index": total_files,
+            "total_files": total_files,
+            "current_filename": "All Files Read",
+            "stage": "Gemini 2.5 Flash AI Analyzing Rules & Strategy...",
+            "file_progress_pct": 100,
+            "overall_progress_pct": 90,
+            "status": "processing"
+        }
+
         result = generate_tender_summary(stream_file_path)
         
-        # 📊 MATCHING THE AI_SERVICE KEY STRUCTURE PERFECTLY
         in_tokens = result.get("input_tokens", 4500)
         out_tokens = result.get("output_tokens", 1200)
         t_no = result.get("tender_no", "N/A")
         ui_payload = result.get("ui_data", result)
 
-        # Force baseline simulation tokens if they evaluate to zero
         if not in_tokens or in_tokens == 0: in_tokens = 4500
         if not out_tokens or out_tokens == 0: out_tokens = 1200
 
-        # Calculate exact financial rates
         computed_cost = (in_tokens * 0.00001) + (out_tokens * 0.00003)
         
-        # Log to postgres database cleanly
         log_system_ai_usage(user_email, "Tender Scan Analysis", t_no, in_tokens, out_tokens, computed_cost)
-
-        # Store the completed payload for the frontend to collect
         result_store[task_id] = {"status": "completed", "data": {"aarvi_intelligence": ui_payload}}
         
     except Exception as e:
-        print(f"❌ PIPELINE ERROR inside background worker: {e}")
+        print(f"❌ PIPELINE ERROR inside background worker: {e}", flush=True)
         result_store[task_id] = {"status": "error", "error": str(e)}
     finally:
-        # Safely delete the massive temporary text file from the server hard drive
         if os.path.exists(stream_file_path):
             try:
                 os.remove(stream_file_path)
             except Exception:
                 pass
                 
-        # Clean up OCR tracking
         if task_id in progress_store:
             del progress_store[task_id]
 
@@ -315,19 +310,14 @@ async def analyze_tender(
 ):
     print(f"\n[DEBUG] Queueing Task: {task_id} by User: {user_email}")
     try:
-        # Read files into RAM instantly before the connection drops
         files_data = []
         for file in files:
             file_bytes = await file.read()
             files_data.append((file.filename, file_bytes))
             
-        # Mark task as processing
         result_store[task_id] = {"status": "processing"}
-        
-        # Hand off to the background worker
         background_tasks.add_task(run_analysis_background, files_data, task_id, user_email)
         
-        # INSTANT RETURN: Cloudflare/Vercel will never time out!
         return {"status": "queued", "task_id": task_id}
         
     except Exception as e:
@@ -337,7 +327,6 @@ async def analyze_tender(
 # ----------------- AUTH ROUTES -----------------
 @app.post("/signup")
 def signup(req: AuthRequest):
-    # Strict Company Domain Filter
     if not req.email.lower().endswith("@aarviencon.com"):
         raise HTTPException(
             status_code=400, 
@@ -349,7 +338,6 @@ def signup(req: AuthRequest):
         cur = conn.cursor()
         hashed_pw = pwd_context.hash(req.password)
         
-        # New users default to 'project_manager' role
         cur.execute(
             "INSERT INTO users (email, password_hash, role, manager_name) VALUES (%s, %s, %s, %s)",
             (req.email.lower(), hashed_pw, "project_manager", req.email.split("@")[0].capitalize())
@@ -366,7 +354,6 @@ def login(req: AuthRequest):
     conn = get_db_connection()
     try:
         cur = conn.cursor()
-        # Ensure we fetch the manager_name
         cur.execute("SELECT email, password_hash, role, manager_name FROM users WHERE email = %s", (req.email.lower(),))
         user = cur.fetchone()
         
@@ -377,7 +364,7 @@ def login(req: AuthRequest):
             "status": "success",
             "email": user['email'],
             "role": user['role'],
-            "manager_name": user['manager_name'] # <--- SENDING THE KEY
+            "manager_name": user['manager_name']
         }
     finally:
         if conn: conn.close()        
@@ -396,7 +383,6 @@ async def chat_endpoint(req: ChatRequest):
         reply_text = reply_data.get("reply", str(reply_data))
         in_tokens = reply_data.get("input_tokens", 250)
         out_tokens = reply_data.get("output_tokens", 150)
-
         if not in_tokens or in_tokens == 0: in_tokens = 250
         if not out_tokens or out_tokens == 0: out_tokens = 150
             
@@ -404,7 +390,6 @@ async def chat_endpoint(req: ChatRequest):
         computed_cost = (in_tokens * 0.00001) + (out_tokens * 0.00003)
         
         log_system_ai_usage(req.user_email, "Chat Query Workspace", t_no, in_tokens, out_tokens, computed_cost)
-
         return {"reply": reply_text}
         
     except Exception as e:
@@ -422,7 +407,6 @@ def get_sessions(email: str, q: Optional[str] = None):
         cur = conn.cursor()
         clean_email = email.lower().strip() if email else ""
         
-        # 🎯 FIX 1: Sort by updated_at with a fallback to created_at for older chats
         if q:
             query = """
                 SELECT * FROM chat_sessions
@@ -471,14 +455,13 @@ def save_chat_message(data: SaveMessage):
     conn = get_db_connection()
     try:
         cur = conn.cursor()
-        
         clean_email = data.user_email.lower().strip() if data.user_email else None
         
-        # 🎯 FIX 2: Safely convert NOW() to TEXT to match your table schema
+        # 🎯 FIX: Force IST Timestamp when creating or updating chat sessions
         cur.execute(
             """
             INSERT INTO chat_sessions (session_id, title, user_email, updated_at)
-            VALUES (%s, COALESCE(%s, 'New Analysis'), %s, TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS'))
+            VALUES (%s, COALESCE(%s, 'New Analysis'), %s, TO_CHAR(NOW() AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI:SS'))
             ON CONFLICT (session_id) DO UPDATE 
             SET user_email = COALESCE(EXCLUDED.user_email, chat_sessions.user_email),
                 title = CASE 
@@ -486,7 +469,7 @@ def save_chat_message(data: SaveMessage):
                     THEN EXCLUDED.title 
                     ELSE COALESCE(chat_sessions.title, EXCLUDED.title, 'New Analysis')
                 END,
-                updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS');
+                updated_at = TO_CHAR(NOW() AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI:SS');
             """,
             (data.session_id, data.title, clean_email)
         )
@@ -494,7 +477,7 @@ def save_chat_message(data: SaveMessage):
         cur.execute(
             """
             INSERT INTO chat_messages (session_id, role, content, timestamp)
-            VALUES (%s, %s, %s, TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS'))
+            VALUES (%s, %s, %s, TO_CHAR(NOW() AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI:SS'))
             """,
             (data.session_id, data.role, data.content)
         )
@@ -519,10 +502,11 @@ def rename_session(session_id: str, data: SessionRename):
     conn = get_db_connection()
     try:
         cur = conn.cursor()
+        # 🎯 FIX: Force IST Timestamp on session rename
         cur.execute(
             """
             UPDATE chat_sessions
-            SET title = %s, updated_at = TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
+            SET title = %s, updated_at = TO_CHAR(NOW() AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI:SS')
             WHERE session_id = %s
             """,
             (data.title, session_id)
@@ -537,13 +521,13 @@ def clone_chat(session_id: str):
     conn = get_db_connection()
     try:
         cur = conn.cursor()
-        
         new_session_id = str(uuid.uuid4())
         
+        # 🎯 FIX: Force IST Timestamp when cloning chat sessions
         cur.execute(
             """
             INSERT INTO chat_sessions (session_id, title, user_email, updated_at)
-            SELECT %s, title || ' (Imported)', user_email, TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
+            SELECT %s, title || ' (Imported)', user_email, TO_CHAR(NOW() AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI:SS')
             FROM chat_sessions
             WHERE session_id = %s
             """,
@@ -553,7 +537,7 @@ def clone_chat(session_id: str):
         cur.execute(
             """
             INSERT INTO chat_messages (session_id, role, content, timestamp)
-            SELECT %s, role, content, TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
+            SELECT %s, role, content, TO_CHAR(NOW() AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI:SS')
             FROM chat_messages
             WHERE session_id = %s
             """,
@@ -589,7 +573,6 @@ def get_kpi_stats(year: str = "All", manager: str = None):
     
     try:
         cur = conn.cursor()
-        
         where_clauses = ["tender_status != 'Quoted Legacy'"]
         params = []
         
@@ -709,7 +692,6 @@ def add_tender(t: Tender):
                 %s,%s
             )
         """
-        # 🎯 FIX: Apply clean_empty to prevent DB crashes on empty dates/numbers
         cur.execute(
             query,
             (
@@ -738,7 +720,6 @@ async def add_tender_with_file(
     try:
         t = json.loads(tender_data)
         
-        # Clean the filename and save to local disk
         safe_filename = summary_file.filename.replace(" ", "_")
         unique_filename = f"{uuid.uuid4()}_{safe_filename}"
         file_path = os.path.join("uploads", unique_filename)
@@ -746,7 +727,6 @@ async def add_tender_with_file(
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(summary_file.file, buffer)
             
-        # 🎯 FIX: Read headers from Cloudflare Tunnel to build the correct public URL
         scheme = request.headers.get("x-forwarded-proto", "http")
         host = request.headers.get("x-forwarded-host", request.headers.get("host"))
         file_url = f"{scheme}://{host}/uploads/{unique_filename}"
@@ -770,7 +750,6 @@ async def add_tender_with_file(
                 %s,%s,%s
             )
         """
-        # 🎯 FIX: Apply clean_empty mapping here as well
         cur.execute(query, (
             t.get('tender_status'), clean_empty(t.get('received_date')), clean_empty(t.get('due_date')), t.get('name_of_client'), clean_empty(t.get('location')),
             t.get('tender_no'), clean_empty(t.get('tender_open_price')), clean_empty(t.get('quoted_value')), clean_empty(t.get('description')), clean_empty(t.get('project_manager')),
@@ -844,12 +823,9 @@ def quick_update_status(tender_no: str, update: StatusUpdate):
 # ----------------- LOG TENDER LOSS (L1-L5) -----------------
 @app.put("/log-loss/{tender_no:path}")
 def log_full_leaderboard_loss(tender_no: str, payload: FullPostBidPayload):
-    import json
     conn = get_db_connection()
     try:
         cur = conn.cursor()
-        
-        # Convert the Python list of competitors into a JSON string for Postgres JSONB
         competitors_json_string = json.dumps([c.dict() for c in payload.competitors])
         
         cur.execute(
@@ -911,7 +887,6 @@ def update_tender(tender_no: str, t: Tender):
     conn = get_db_connection()
     try:
         cur = conn.cursor()
-        # 🎯 FIX: Apply clean_empty here as well
         cur.execute(
             """
             UPDATE tenders SET
@@ -950,7 +925,6 @@ async def update_tender_with_file(
     try:
         t = json.loads(tender_data)
         
-        # Save file securely
         safe_filename = summary_file.filename.replace(" ", "_")
         unique_filename = f"{uuid.uuid4()}_{safe_filename}"
         file_path = os.path.join("uploads", unique_filename)
@@ -958,7 +932,6 @@ async def update_tender_with_file(
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(summary_file.file, buffer)
             
-        # 🎯 FIX: Build correct Cloudflare URL
         scheme = request.headers.get("x-forwarded-proto", "http")
         host = request.headers.get("x-forwarded-host", request.headers.get("host"))
         file_url = f"{scheme}://{host}/uploads/{unique_filename}"
@@ -968,7 +941,6 @@ async def update_tender_with_file(
             return {"error": "Database disconnected"}
             
         cur = conn.cursor()
-        # 🎯 FIX: Clean empty strings here
         cur.execute(
             """
             UPDATE tenders SET
@@ -999,10 +971,9 @@ async def update_tender_with_file(
         if 'conn' in locals() and conn: 
             conn.close()
 
-# ----------------- GLOBAL ACCOUNT COMPUTE PANELS (NORMAL FLATTENED ROUTES) -----------------
+# ----------------- GLOBAL ACCOUNT COMPUTE PANELS -----------------
 @app.get("/api/users")
 def get_live_users(admin_email: Optional[str] = None):
-    """Directly extracts existing records using flat routing layout"""
     conn = get_db_connection()
     if not conn:
         raise HTTPException(status_code=500, detail="Database connection failed")
@@ -1019,7 +990,6 @@ def get_live_users(admin_email: Optional[str] = None):
 
 @app.post("/api/users")
 def create_new_user(user: NewUser, admin_email: Optional[str] = None):
-    """Inserts a fresh worker row directly into the users table profile"""
     conn = get_db_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -1039,7 +1009,6 @@ def create_new_user(user: NewUser, admin_email: Optional[str] = None):
 
 @app.delete("/api/users/{email}")
 def delete_user(email: str, admin_email: Optional[str] = None):
-    """Deletes an existing user from your users table structure"""
     if email.lower().strip() == "shreyas@aarviencon.com":
         raise HTTPException(status_code=403, detail="Security Lockout: Core administrative index root immutable.")
         
@@ -1054,7 +1023,6 @@ def delete_user(email: str, admin_email: Optional[str] = None):
 
 @app.patch("/api/users/reset-password")
 def reset_password(data: PasswordReset, admin_email: Optional[str] = None):
-    """Overrides and changes user passwords from the frontend panel control"""
     conn = get_db_connection()
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -1067,14 +1035,11 @@ def reset_password(data: PasswordReset, admin_email: Optional[str] = None):
 
 @app.get("/api/usage-analytics")
 def get_user_wise_billing_summary(admin_email: Optional[str] = None):
-    """Exposes the raw chronological timeline of AI usage logs for dynamic frontend filtering"""
     conn = get_db_connection()
     if not conn:
         return {"logs": []}
     try:
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # Select the raw rows cleanly without pre-grouping them
         cur.execute("""
             SELECT id, 
                    user_email, 
@@ -1088,8 +1053,6 @@ def get_user_wise_billing_summary(admin_email: Optional[str] = None):
             ORDER BY usage_date DESC;
         """)
         raw_logs = cur.fetchall()
-        
-        # Return a single unmanipulated timeline array to the frontend
         return {"logs": [dict(row) for row in raw_logs] if raw_logs else []}
     except Exception as e:
         print(f"❌ Analytics fetch exception: {e}")
@@ -1100,6 +1063,5 @@ def get_user_wise_billing_summary(admin_email: Optional[str] = None):
 # ----------------- MAIN -----------------
 if __name__ == "__main__":
     import uvicorn
-    # Use environment variables for port to support cloud hosting properly
     port = int(os.getenv("PORT", 8001))
     uvicorn.run(app, host="0.0.0.0", port=port)

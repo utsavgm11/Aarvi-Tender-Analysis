@@ -8,22 +8,18 @@ from psycopg2.extras import RealDictCursor
 from config import GEMINI_API_KEY
 from logic import evaluate_tender_rules 
 from google import genai
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import gc
 
 # --- DATABASE CONNECTION ---
-# Load the environment variables from your local .env file
 load_dotenv()
-
-# Securely pull the connection string into your application engine memory
 NEON_URL = os.getenv("DATABASE_URL")
 if not NEON_URL:
     raise ValueError("❌ CRITICAL ERROR: DATABASE_URL is missing from your environment variables!")
 
-# 1. Initialize the new Client
+# 1. Initialize the Client
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-# 2. Wrapper to keep old model.generate_content() logic working seamlessly
+# 2. SDK Wrapper
 class ModelWrapper:
     def __init__(self, model_name):
         self.model_name = model_name
@@ -32,7 +28,6 @@ class ModelWrapper:
         if not client:
             raise ValueError("Gemini API Key is missing!")
         
-        # Map old 'generation_config' to new 'config' for the new SDK
         if 'generation_config' in kwargs:
             kwargs['config'] = kwargs.pop('generation_config')
             
@@ -44,7 +39,6 @@ class ModelWrapper:
 
 def get_model():
     try:
-        # Fallback to standard 2.0 or 1.5 flash models for stability
         return ModelWrapper('gemini-2.5-flash-lite')
     except:
         return ModelWrapper('gemini-2.5-flash')
@@ -65,16 +59,12 @@ def clean_price_to_float(price_str):
     if not price_str or price_str == "Not Specified":
         return 0.0
     
-    # Remove commas and convert to lower
     text = str(price_str).lower().replace(',', '')
-    
-    # Simple regex to get the number
     num = re.findall(r"[-+]?\d*\.\d+|\d+", text)
     if not num:
         return 0.0
     val = float(num[0])
     
-    # Handle multipliers
     if 'lakh' in text or 'lac' in text:
         val *= 100000
     elif 'crore' in text or 'cr' in text:
@@ -102,7 +92,6 @@ def normalize_client_name(extracted_name):
         
     name = str(extracted_name).upper().strip()
     
-    # Existing rules
     if "HINDUSTAN PETROLEUM" in name:
         return "HPCL"
     if "INDIAN OIL" in name:
@@ -111,8 +100,6 @@ def normalize_client_name(extracted_name):
         return "ONGC"
     if "BHARAT PETROLEUM" in name:
         return "BPCL"
-        
-    # --- SIMPLIFIED DIRECT GAIL RULE ---
     if "GAIL" in name or "GAS AUTHORITY" in name:
         return "GAIL"
         
@@ -145,7 +132,6 @@ def fetch_client_intelligence(client_name: str):
         if not records:
             return {"kpi": "No Past Record", "competitors": "No historical competitor data found for this client."}
             
-        # 2. Calculate Win/Loss KPIs
         won_bids = sum(1 for r in records if r['tender_status'] == 'Tender Won')
         lost_bids = sum(1 for r in records if r['tender_status'] == 'Tender Lost')
         quoted_bids = sum(1 for r in records if r['tender_status'] in ['Tender Quoted', 'Quoted'])
@@ -157,7 +143,6 @@ def fetch_client_intelligence(client_name: str):
         
         kpi_text = f"[ ❌ {loss_rate}% | 🎉 {win_rate}% ]\nTotal Bids: {total_bids} (Won: {won_bids} | Lost: {lost_bids} | Quoted: {quoted_bids} | Cancelled: {cancelled_bids})"
         
-        # 3. Extract Top 3 Competitor Threats AND Qualitative Comments
         threats = {}
         raw_comments = []
         lost_records_with_data = 0
@@ -189,16 +174,13 @@ def fetch_client_intelligence(client_name: str):
                     except json.JSONDecodeError:
                         raw_comments.append(f"Competitor Note: {competitors.strip()}")
                         has_extracted_something = True
-
                 comments = row.get('comments')
                 if comments and str(comments).strip().lower() not in ['nan', 'none', '']:
                     raw_comments.append(str(comments).strip())
                     has_extracted_something = True
-
                 if has_extracted_something:
                     lost_records_with_data += 1
                     
-        # 4. Format the Competitor UI Text Block
         if lost_records_with_data == 0:
             comp_text = f"We have {total_bids} bids on record, but no competitor history or loss comments were found for these past losses."
         else:
@@ -219,7 +201,6 @@ def fetch_client_intelligence(client_name: str):
                         comp_text += f"   - Average Margin Disadvantage: We typically lose to them by a gap of {avg_gap}%\n\n"
                     else:
                         comp_text += "   - Average Margin Disadvantage: Baseline benchmark maker (0.00% variance)\n\n"
-
             if raw_comments:
                 comp_text += "**Qualitative Loss Reasons & Background:**\n"
                 for comment in set(raw_comments):
@@ -228,7 +209,7 @@ def fetch_client_intelligence(client_name: str):
         return {"kpi": kpi_text, "competitors": comp_text.strip()}
         
     except Exception as db_err:
-        print(f"Database background intelligence lookup skipped: {db_err}")
+        print(f"Database background intelligence lookup skipped: {db_err}", flush=True)
         return {"kpi": "Database Offline", "competitors": "Could not retrieve competitor history."}
 
 def ensure_ui_schema(ai_data: dict, logic_data: dict, intel_data: dict, error_msg: str = None) -> dict:
@@ -250,7 +231,6 @@ def ensure_ui_schema(ai_data: dict, logic_data: dict, intel_data: dict, error_ms
     if error_msg:
         template["strategic_advice"] = f"Error: {error_msg}"
         return template
-
     for key in ai_data:
         if key in template:
             template[key] = format_for_ui(ai_data[key])
@@ -258,30 +238,58 @@ def ensure_ui_schema(ai_data: dict, logic_data: dict, intel_data: dict, error_ms
     for key in logic_data:
         if key in template:
             template[key] = str(logic_data[key])
-
     template["win_loss_kpi"] = intel_data.get("kpi", "No Past Record")
     template["historical_competitors"] = intel_data.get("competitors", "No Data")
-
     return template
 
+# ==============================================================================
+# 🚀 HIGH-SPEED SINGLE-PASS TENDER GENERATOR (Sub-Second AI Execution)
+# ==============================================================================
+def generate_tender_summary(tender_text: str = None):
+    """
+    Blazing fast single-pass AI scanner for full tender text streams.
+    Utilizes Gemini 2.5 Flash Lite's 1,000,000+ token context window.
+    """
+    total_input_tokens = 0
+    total_output_tokens = 0
 
-# ==============================================================================
-# 🚀 PARALLEL AI WORKER (For processing chunks concurrently)
-# ==============================================================================
-def process_chunk_with_ai(chunk_text: str, chunk_idx: int, total_chunks: int):
-    """Worker function to process a single document chunk concurrently using Gemini Flash."""
-    print(f"⚡ [PARALLEL AI] Sending Chunk {chunk_idx}/{total_chunks} to Gemini...", flush=True)
+    if not tender_text:
+        return {
+            "ui_data": ensure_ui_schema({}, {}, {}, "Empty tender document stream provided."),
+            "input_tokens": 0, "output_tokens": 0, "tender_no": "N/A"
+        }
+
+    # If passed a file path instead of raw string, read it
+    if len(tender_text) < 1000:
+        try:
+            if os.path.exists(tender_text):
+                with open(tender_text, "r", encoding="utf-8") as f:
+                    tender_text = f.read()
+        except Exception:
+            pass
+
+    if len(tender_text.strip()) == 0:
+        return {
+            "ui_data": ensure_ui_schema({}, {}, {}, "Empty tender document stream provided."),
+            "input_tokens": 0, "output_tokens": 0, "tender_no": "N/A"
+        }
+
     model = get_model()
-    
+    kb_data = get_knowledge_base()
+
+    print(f"🚀 [SINGLE-PASS AI] Streaming {len(tender_text)} characters into Gemini Flash...", flush=True)
+
+    # High-Speed Single Pass Prompt
     prompt = f"""
-    ROLE: Expert Tender Data Extractor.
-    TASK: Scan the following PARTIAL segment of a massive Tender Document and map findings to the JSON schema.
-    If a detail is missing from this specific segment, output "Not Specified" for that field. Do not invent data.
+    ROLE: Chief Bidding & Tender Analysis Specialist for Aarvi Encon.
+    TASK: Scan the provided COMPLETE tender document text and extract exact details into JSON.
 
     CRITICAL INSTRUCTIONS:
-    1. Use '•' (bullet points) and newlines for arrays.
-    2. description: Provide a summary of the project based ONLY on this chunk.
-    3. manpower_count: Output a clean bulleted list using escaped newlines ('\\n').
+    1. Read the text carefully. Search for hidden penal clauses, payment terms, and manpower qualifications anywhere in the document.
+    2. Use '•' (bullet points) and newlines for arrays.
+    3. description: Provide a clear summary of the project scope based ONLY on the document text.
+    4. manpower_count: Output a clean bulleted list using escaped newlines ('\\n').
+    5. Do not invent data. Output "Not Specified" if a field is absent.
 
     JSON SCHEMA (Output ONLY valid JSON):
     {{
@@ -302,128 +310,31 @@ def process_chunk_with_ai(chunk_text: str, chunk_idx: int, total_chunks: int):
       "similar_work": "Extract similar work required"
     }}
 
-    TENDER TEXT SEGMENT: {chunk_text}
+    COMPLETE TENDER DOCUMENT TEXT:
+    {tender_text[:1500000]}
     """
-    
+
     try:
         response = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
         
-        in_tokens = getattr(response.usage_metadata, 'prompt_token_count', 0) if hasattr(response, 'usage_metadata') and response.usage_metadata else 0
-        out_tokens = getattr(response.usage_metadata, 'candidates_token_count', 0) if hasattr(response, 'usage_metadata') and response.usage_metadata else 0
+        in_tok = getattr(response.usage_metadata, 'prompt_token_count', 0) if hasattr(response, 'usage_metadata') and response.usage_metadata else 0
+        out_tok = getattr(response.usage_metadata, 'candidates_token_count', 0) if hasattr(response, 'usage_metadata') and response.usage_metadata else 0
         
+        total_input_tokens += in_tok
+        total_output_tokens += out_tok
+
         try:
-            ai_data = json.loads(response.text)
+            final_ai_data = json.loads(response.text)
         except json.JSONDecodeError:
             match = re.search(r'\{.*\}', response.text, re.DOTALL)
-            ai_data = json.loads(match.group(0)) if match else {}
-            
-        return chunk_idx, ai_data, in_tokens, out_tokens
-        
+            final_ai_data = json.loads(match.group(0)) if match else {}
+
     except Exception as e:
-        print(f"⚠️ Warning: Chunk {chunk_idx} processing failed: {e}", flush=True)
-        return chunk_idx, {}, 0, 0
-
-
-# ==============================================================================
-# 🚀 MAIN GENERATOR (Auto-Detects String & Processes Unlimited Size)
-# ==============================================================================
-def generate_tender_summary(tender_text: str = None):
-    """
-    Safely processes massive extracted text strings in memory.
-    Uses Map-Reduce to parse 20,000+ page strings perfectly.
-    """
-    total_input_tokens = 0
-    total_output_tokens = 0
-
-    if not tender_text:
-        return {
-            "ui_data": ensure_ui_schema({}, {}, {}, "Empty tender document stream provided."),
-            "input_tokens": 0, "output_tokens": 0, "tender_no": "N/A"
-        }
-
-    # If by chance it is passed a file path instead of a string, read it.
-    if len(tender_text) < 1000:
-        try:
-            if os.path.exists(tender_text):
-                with open(tender_text, "r", encoding="utf-8") as f:
-                    tender_text = f.read()
-        except Exception:
-            pass
-
-    if len(tender_text.strip()) == 0:
-        return {
-            "ui_data": ensure_ui_schema({}, {}, {}, "Empty tender document stream provided."),
-            "input_tokens": 0, "output_tokens": 0, "tender_no": "N/A"
-        }
-
-    model = get_model()
-    kb_data = get_knowledge_base()
-
-    # Slice the massive string into safe 1,000,000 character chunks
-    CHUNK_SIZE = 1000000 
-    chunks = [tender_text[i:i + CHUNK_SIZE] for i in range(0, len(tender_text), CHUNK_SIZE)]
-
-    total_chunks = len(chunks)
-    partial_extractions = [None] * total_chunks
-
-    print(f"🚀 Running Parallel Map Pass across {total_chunks} AI chunk(s)...", flush=True)
-
-    # --- PHASE 1: PARALLEL MAP (Send chapters to Gemini concurrently) ---
-    with ThreadPoolExecutor(max_workers=min(4, total_chunks if total_chunks > 0 else 1)) as executor:
-        futures = [executor.submit(process_chunk_with_ai, chunks[i], i + 1, total_chunks) for i in range(total_chunks)]
-        for future in as_completed(futures):
-            idx, result_json, in_tok, out_tok = future.result()
-            # idx is 1-based, list is 0-based
-            partial_extractions[idx - 1] = result_json
-            total_input_tokens += in_tok
-            total_output_tokens += out_tok
-
-    # Filter out empty dicts from failed chunks
-    valid_extractions = [ext for ext in partial_extractions if ext]
-
-    # --- PHASE 2: REDUCE (Merge everything into one master JSON) ---
-    if len(valid_extractions) == 0:
+        print(f"⚠️ Warning: Single-pass AI extraction encountered an error: {e}", flush=True)
         final_ai_data = {}
-    elif len(valid_extractions) == 1:
-        final_ai_data = valid_extractions[0]
-    else:
-        print(f"🧩 Merging {len(valid_extractions)} chunk extractions into one master summary...", flush=True)
-        merge_prompt = f"""
-        ROLE: Senior Data Aggregator.
-        TASK: You are given an array of JSON objects extracted from different chapters of the same massive document.
-        Merge them into ONE final, comprehensive JSON object. 
-        - If multiple chunks found the same "tender_no" or "client_name", keep the clearest one.
-        - Combine all bullet points for arrays like "scope_of_work", "financial_qualification", and "manpower_count" into a single exhaustive list. Remove duplicates.
-        - NEVER output "Not Specified" if the valid data exists in ANY of the chunks.
 
-        JSON SCHEMA REQUIRED (Output ONLY valid JSON):
-        {{
-          "tender_no": "Not Specified", "client_name": "Not Specified", "due_date": "Not Specified", "tender_open_price": "Not Specified", "emd": "Not Specified",
-          "financial_qualification": "Not Specified", "technical_qualification": "Not Specified", "mandatory_compliance": "Not Specified",
-          "scope_of_work": "Not Specified", "manpower_count": "Not Specified", "manpower_qual": "Not Specified", "shift_duty": "Not Specified",
-          "payment_terms": "Not Specified", "penalty_terms": "Not Specified", "similar_work": "Not Specified"
-        }}
-
-        PARTIAL EXTRACTIONS TO MERGE: {json.dumps(valid_extractions)}
-        """
-        try:
-            merge_response = model.generate_content(merge_prompt, generation_config={"response_mime_type": "application/json"})
-            if hasattr(merge_response, 'usage_metadata') and merge_response.usage_metadata:
-                total_input_tokens += getattr(merge_response.usage_metadata, 'prompt_token_count', 0)
-                total_output_tokens += getattr(merge_response.usage_metadata, 'candidates_token_count', 0)
-            
-            try:
-                final_ai_data = json.loads(merge_response.text)
-            except json.JSONDecodeError:
-                match = re.search(r'\{.*\}', merge_response.text, re.DOTALL)
-                final_ai_data = json.loads(match.group(0)) if match else {}
-        except Exception as e:
-            print(f"⚠️ Warning: Merge failed. Using first chunk as fallback.", flush=True)
-            final_ai_data = valid_extractions[0] if valid_extractions else {}
-
-    # --- PHASE 3: DATABASE INTELLIGENCE & LOGIC RULES ---
+    # --- DATABASE INTELLIGENCE & LOGIC RULES ---
     sample_text = tender_text[:50000]
-    
     logic_decisions = evaluate_tender_rules(final_ai_data, kb_data, sample_text)
     extracted_client = final_ai_data.get("client_name", "Not Specified")
     historical_intel = fetch_client_intelligence(extracted_client)
@@ -452,7 +363,7 @@ def generate_tender_summary(tender_text: str = None):
             except json.JSONDecodeError:
                 match = re.search(r'\{.*\}', ai_strat_obj.text, re.DOTALL)
                 strategy_json = json.loads(match.group(0)) if match else {}
-
+                
             historical_intel["competitors"] = strategy_json.get("top_3_competitors", "Could not extract top competitors.")
             ai_advice = strategy_json.get("strategic_advice", "Strategy generation failed.")
             base_advice = logic_decisions.get("strategic_advice", "")
@@ -464,10 +375,7 @@ def generate_tender_summary(tender_text: str = None):
         except Exception as e:
             print(f"Failed to generate competitive strategy: {e}", flush=True)
 
-    # Reclaim RAM explicitly
-    del chunks
     gc.collect()
-
     final_ui_data = ensure_ui_schema(final_ai_data, logic_decisions, historical_intel)
     
     return {
@@ -476,7 +384,6 @@ def generate_tender_summary(tender_text: str = None):
         "output_tokens": total_output_tokens,
         "tender_no": final_ai_data.get("tender_no", "N/A")
     }
-
 
 def chat_with_tender(query: str, context: dict, full_text: str = ""):
     model = get_model()
