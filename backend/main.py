@@ -595,7 +595,7 @@ def get_kpi_stats(year: str = "All", manager: str = None):
             SUM(CASE WHEN tender_status IN ('Tender Won', 'Tender Lost', 'Tender Quoted', 'Quoted', 'Quoted Active', 'Tender Cancelled') THEN 1 ELSE 0 END) AS total_participated,
             ROUND(CAST(SUM(CASE WHEN tender_status = 'Tender Won' THEN 1 ELSE 0 END) AS NUMERIC) * 100.0 / NULLIF(CAST(SUM(CASE WHEN tender_status IN ('Tender Won', 'Tender Lost') THEN 1 ELSE 0 END) AS NUMERIC), 0), 1) AS win_rate,
             SUM(CASE WHEN tender_status = 'Tender Won' THEN CAST(NULLIF(tender_open_price::text, '') AS NUMERIC) ELSE 0.0 END) AS total_won_value,
-            SUM(CASE WHEN tender_status IN ('Tender Quoted', 'Quoted', 'Quoted Active') AND (due_date::text >= CURRENT_DATE::text OR due_date IS NULL) THEN 1 ELSE 0 END) AS active_pipeline
+            SUM(CASE WHEN tender_status IN ('Tender Quoted', 'Quoted', 'Quoted Active', 'PENDING', 'Pending', 'Active') AND (due_date::text >= CURRENT_DATE::text OR due_date IS NULL) THEN 1 ELSE 0 END) AS active_pipeline
         FROM tenders
         WHERE {where_stmt}
         """
