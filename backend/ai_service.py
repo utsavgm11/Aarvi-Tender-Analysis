@@ -2,13 +2,10 @@
 import os
 import re
 import gc
-import glob
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from dotenv import load_dotenv
-import psycopg2
-from psycopg2.extras import RealDictCursor
 from google import genai
 from google.genai import types
 
@@ -23,6 +20,11 @@ from config import (
 from models import TenderExtractionSchema, StrategyExtractionSchema
 from logic import evaluate_tender_rules
 from triage import select_triaged_pages, select_pages_for_missing_fields
+from knowledge_service import (
+    build_unified_client_intelligence,
+    query_knowledge_for_chat,
+    get_knowledge_store,
+)
 
 # --- DATABASE CONNECTION ---
 load_dotenv()
@@ -101,15 +103,9 @@ def get_model() -> ModelWrapper:
 
 
 def get_knowledge_base() -> str:
-    path = os.path.join("knowledge_base", "Aarvi_Encon", "*.json")
-    knowledge = []
-    for file_path in glob.glob(path):
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                knowledge.append(json.load(f))
-        except Exception:
-            pass
-    return json.dumps(knowledge)
+    """Returns preloaded Aarvi Encon client execution JSON profiles from memory."""
+    store = get_knowledge_store()
+    return json.dumps(store["client_profiles"])
 
 
 def clean_price_to_float(price_str) -> float:
@@ -146,145 +142,39 @@ def format_for_ui(value) -> str:
 
 
 def normalize_client_name(extracted_name: str) -> str:
-    """Translates full company names into core acronyms to group joint ventures."""
+    """Preserved helper for canonical acronym display."""
     if not extracted_name or extracted_name == "Not Specified":
         return extracted_name
 
     name = str(extracted_name).upper().strip()
-
-    if "HINDUSTAN PETROLEUM" in name:
+    if "HINDUSTAN PETROLEUM" in name or "HPCL" in name:
         return "HPCL"
-    if "INDIAN OIL" in name:
+    if "INDIAN OIL" in name or "IOCL" in name:
         return "IOCL"
-    if "OIL & NATURAL GAS" in name or "OIL AND NATURAL GAS" in name:
+    if "OIL & NATURAL GAS" in name or "OIL AND NATURAL GAS" in name or "ONGC" in name:
         return "ONGC"
-    if "BHARAT PETROLEUM" in name:
+    if "BHARAT PETROLEUM" in name or "BPCL" in name:
         return "BPCL"
     if "GAIL" in name or "GAS AUTHORITY" in name:
         return "GAIL"
+    if "MANGALORE REFINERY" in name or "MRPL" in name:
+        return "MRPL"
+    if "CHENNAI PETROLEUM" in name or "CPCL" in name:
+        return "CPCL"
+    if "NUMALIGARH REFINERY" in name or "NRL" in name:
+        return "NRL"
+    if "RELIANCE" in name or "RIL" in name:
+        return "RIL"
 
     return extracted_name.strip()
 
 
 def fetch_client_intelligence(client_name: str) -> dict:
     """
-    Connects to Neon to extract Win/Loss ratios, structured Competitor Threats,
-    AND unstructured qualitative comments for Lost bids.
+    Merges historical records from BOTH `Cleaned_Tender_Data.xlsx` AND live
+    PostgreSQL `tenders` using multi-alias matching (e.g., MRPL <-> Mangalore Refinery).
     """
-    search_name = normalize_client_name(client_name)
-
-    if not search_name or search_name == "Not Specified":
-        return {"kpi": "No Past Record", "competitors": "No historical competitor data found for this client."}
-
-    try:
-        conn = psycopg2.connect(NEON_URL, cursor_factory=RealDictCursor)
-        cur = conn.cursor()
-
-        cur.execute(
-            """
-            SELECT tender_status, competitor_list, comments
-            FROM tenders
-            WHERE name_of_client ILIKE %s
-            """,
-            (f"%{search_name}%",),
-        )
-
-        records = cur.fetchall()
-        cur.close()
-        conn.close()
-
-        if not records:
-            return {"kpi": "No Past Record", "competitors": "No historical competitor data found for this client."}
-
-        won_bids = sum(1 for r in records if r["tender_status"] == "Tender Won")
-        lost_bids = sum(1 for r in records if r["tender_status"] == "Tender Lost")
-        quoted_bids = sum(1 for r in records if r["tender_status"] in ["Tender Quoted", "Quoted"])
-        cancelled_bids = sum(1 for r in records if r["tender_status"] in ["Cancelled", "Tender Cancelled"])
-
-        total_bids = won_bids + lost_bids + quoted_bids + cancelled_bids
-        win_rate = round((won_bids / total_bids) * 100) if total_bids > 0 else 0
-        loss_rate = 100 - win_rate
-
-        kpi_text = (
-            f"[ ❌ {loss_rate}% | 🎉 {win_rate}% ]\n"
-            f"Total Bids: {total_bids} (Won: {won_bids} | Lost: {lost_bids} | Quoted: {quoted_bids} | Cancelled: {cancelled_bids})"
-        )
-
-        threats = {}
-        raw_comments = []
-        lost_records_with_data = 0
-
-        for row in records:
-            if row["tender_status"] == "Tender Lost":
-                has_extracted_something = False
-
-                competitors = row.get("competitor_list")
-                if competitors and isinstance(competitors, str) and competitors.strip() not in ["[]", ""]:
-                    try:
-                        comp_list = json.loads(competitors)
-                        if isinstance(comp_list, list) and len(comp_list) > 0:
-                            has_extracted_something = True
-                            for comp in comp_list:
-                                name = comp.get("company", "")
-                                rank = comp.get("rank", "")
-                                gap = comp.get("percent_diff") or 0.0
-
-                                if name and name.lower() not in ["aarvi encon", "aarvi encon ltd", "aarvi"]:
-                                    if name not in threats:
-                                        threats[name] = {"encounters": 0, "wins": 0, "gaps": []}
-
-                                    threats[name]["encounters"] += 1
-                                    if rank == "L1":
-                                        threats[name]["wins"] += 1
-                                    if gap > 0:
-                                        threats[name]["gaps"].append(gap)
-                    except json.JSONDecodeError:
-                        raw_comments.append(f"Competitor Note: {competitors.strip()}")
-                        has_extracted_something = True
-
-                comments = row.get("comments")
-                if comments and str(comments).strip().lower() not in ["nan", "none", ""]:
-                    raw_comments.append(str(comments).strip())
-                    has_extracted_something = True
-
-                if has_extracted_something:
-                    lost_records_with_data += 1
-
-        if lost_records_with_data == 0:
-            comp_text = (
-                f"We have {total_bids} bids on record, but no competitor history or loss comments were found for these past losses."
-            )
-        else:
-            comp_text = (
-                f"Our backend records indicate we have logged qualitative data on {lost_records_with_data} lost tenders for this operator.\n\n"
-            )
-
-            if threats:
-                comp_text += "**Quantitative Competitor Threats:**\n"
-                sorted_threats = sorted(threats.items(), key=lambda x: (x[1]["wins"], x[1]["encounters"]), reverse=True)
-                medals = ["🥇 1.", "🥈 2.", "🥉 3."]
-
-                for i, (comp_name, data) in enumerate(sorted_threats[:3]):
-                    avg_gap = round(sum(data["gaps"]) / len(data["gaps"]), 2) if data["gaps"] else 0.0
-                    medal = medals[i] if i < 3 else f"• {i + 1}."
-
-                    comp_text += f"{medal} **{comp_name}**\n"
-                    comp_text += f"   - Encountered: {data['encounters']} times | Has taken L1 Rank: {data['wins']} times\n"
-                    if avg_gap > 0:
-                        comp_text += f"   - Average Margin Disadvantage: We typically lose to them by a gap of {avg_gap}%\n\n"
-                    else:
-                        comp_text += "   - Average Margin Disadvantage: Baseline benchmark maker (0.00% variance)\n\n"
-
-            if raw_comments:
-                comp_text += "**Qualitative Loss Reasons & Background:**\n"
-                for comment in set(raw_comments):
-                    comp_text += f"• {comment}\n"
-
-        return {"kpi": kpi_text, "competitors": comp_text.strip()}
-
-    except Exception as db_err:
-        print(f"Database background intelligence lookup skipped: {db_err}", flush=True)
-        return {"kpi": "Database Offline", "competitors": "Could not retrieve competitor history."}
+    return build_unified_client_intelligence(client_name, NEON_URL)
 
 
 def ensure_ui_schema(ai_data: dict, logic_data: dict, intel_data: dict, error_msg: str = None) -> dict:
@@ -370,7 +260,7 @@ def _is_missing_val(val) -> bool:
 def generate_tender_summary(tender_text: str = None):
     """
     Triaged two-pass AI extractor using structured Pydantic schemas,
-    model fallback, timing logs, and loud error propagation.
+    unified Excel + DB + JSON Knowledge Base intelligence, and loud error propagation.
     """
     t0 = time.time()
     total_input_tokens = 0
@@ -429,7 +319,7 @@ TASK: Extract exact tender parameters from the provided triaged tender pages int
 RULES:
 1. Extract factual details strictly from the provided text. Do NOT invent or assume numbers.
 2. Preserve exact currency symbols (₹ / Rs.), units (Lakh / Crore), percentages, and submission date + time.
-3. For `manpower_count`, list every role and headcount using bullet points (`• Role: Count`).
+3. For `manpower_count`, list every role, discipline, and headcount using bullet points (`• Role: Count`). If headcount is unquantified, list the exact roles/categories mentioned.
 4. For `scope_of_work`, summarize the core technical/manpower deliverables clearly.
 5. Output `"Not Specified"` ONLY if a field is genuinely absent from the provided pages.
 
@@ -498,7 +388,7 @@ ADDITIONAL TENDER PAGES:
             except Exception as p2_err:
                 print(f"⚠️ Pass 2 recovery skipped due to non-fatal error: {p2_err}", flush=True)
 
-    # 4. Business Scoring Rules & Client Historical Intelligence
+    # 4. Business Scoring Rules & Unified Client Intelligence (Excel + DB + Knowledge Base)
     t_intel = time.time()
     sample_text = tender_text[:50000]
     logic_decisions = evaluate_tender_rules(final_ai_data, kb_data, sample_text)
@@ -509,16 +399,21 @@ ADDITIONAL TENDER PAGES:
     if (
         historical_intel.get("kpi") != "No Past Record"
         and "No historical competitor data" not in historical_intel.get("competitors", "")
+        and "no detailed competitor breakdown" not in historical_intel.get("competitors", "")
     ):
         strategy_prompt = f"""
-ROLE: Senior Bidding Strategist & Consultant for Aarvi Encon.
+ROLE: Senior Bidding Strategist & Consultant for Aarvi Encon Ltd.
 CLIENT: {extracted_client}
-RAW HISTORICAL LOSS DATA (Competitors & Pricing):
+HISTORICAL WIN/LOSS KPI: {historical_intel.get('kpi')}
+RAW HISTORICAL LOSS & COMPETITOR DATA:
 {historical_intel.get('competitors')}
+AARVI BENCHMARKS:
+- Highly Skilled CTC Baseline: ₹36,465/month | Minimum Service Charge Floor: 3.85%
+- Standard Payment Preference: 7-21 days | Standard LD Cap: 5%
 
-TASK: Analyze the raw competitor data above and return a concise JSON breakdown with:
-1. `top_3_competitors`: Clean bulleted list (`• `) of the Top 3 recurring competitors stating encounters, L1 wins, and specific loss reasons.
-2. `strategic_advice`: Analytical 4-5 sentence recommendation to beat them on this bid.
+TASK: Analyze the raw competitor & regret history above and return a concise JSON breakdown:
+1. `top_3_competitors`: Clean bulleted list (`• `) of the Top 3 recurring competitors stating encounters, L1 wins, and price gap / loss reasons.
+2. `strategic_advice`: Analytical 4-5 sentence winning pricing & technical strategy tailored to Aarvi Encon for this client.
 """
         try:
             ai_strat_obj = model.generate_content(
@@ -569,12 +464,18 @@ TASK: Analyze the raw competitor data above and return a concise JSON breakdown 
 
 def chat_with_tender(query: str, context: dict, full_text: str = ""):
     model = get_model()
+    client_hint = (context or {}).get("client_name", "")
+    kb_context = query_knowledge_for_chat(query, client_hint)
+
     prompt = (
-        f"Context Summary: {json.dumps(context)}\n"
-        f"Relevant Tender Excerpts: {full_text[:250000]}\n"
+        f"Current Tender Summary: {json.dumps(context)}\n\n"
+        f"Relevant Tender Document Pages:\n{full_text[:200000]}\n\n"
+        f"Aarvi Encon Historical & Costing Knowledge Base (Read-Only):\n{kb_context[:60000]}\n\n"
         f"User Question: {query}\n\n"
-        "Answer strictly based on the tender text above using concise Markdown bullet points. "
-        "Cite page numbers when visible in the excerpts."
+        "Answer accurately and concisely using Markdown bullet points. "
+        "Use facts from the current tender document, Aarvi's historical tender records (Excel/DB), "
+        "past executed POs, and Aarvi costing/strategy rules whenever relevant. "
+        "Cite page numbers, PO numbers, or past Tender numbers when visible."
     )
 
     response = model.generate_content(prompt, config={"temperature": 0.1})

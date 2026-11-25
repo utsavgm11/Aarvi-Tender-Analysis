@@ -25,6 +25,7 @@ from ai_service import (
     generate_chat_title,
 )
 from file_parser import append_text_to_disk_stream
+from knowledge_service import get_knowledge_store, sync_tender_to_excel
 
 # ----------------- APP & FILE STORAGE SETUP -----------------
 os.makedirs("uploads", exist_ok=True)
@@ -64,6 +65,52 @@ def get_db_connection():
 
 def clean_empty(val):
     return None if val in ["", "null", "None", None] else val
+
+
+def _format_competitors_for_storage(raw_competitors) -> Optional[str]:
+    """Serializes L1-L5 competitor entries cleanly for PostgreSQL JSONB storage."""
+    if not raw_competitors:
+        return None
+    cleaned = []
+    for c in raw_competitors:
+        c_dict = c.dict() if hasattr(c, "dict") else (c if isinstance(c, dict) else {})
+        company = str(c_dict.get("company") or "").strip()
+        if not company or company == "Unknown Competitor":
+            continue
+        cleaned.append({
+            "rank": str(c_dict.get("rank") or "L1").strip(),
+            "company": company,
+            "amount": float(c_dict.get("amount") or 0.0),
+            "percent_diff": float(c_dict.get("percent_diff") or 0.0),
+        })
+    return json.dumps(cleaned) if cleaned else None
+
+
+def _build_excel_sync_payload(base_dict: dict) -> dict:
+    """Prepares a clean dictionary for append/update sync into Cleaned_Tender_Data.xlsx."""
+    payload = dict(base_dict)
+    comps = payload.get("competitors") or []
+    existing_comments = str(payload.get("comments") or "").strip()
+
+    ranked_lines = []
+    for idx, c in enumerate(comps, start=1):
+        c_dict = c.dict() if hasattr(c, "dict") else (c if isinstance(c, dict) else {})
+        comp_name = str(c_dict.get("company") or "").strip()
+        if not comp_name or comp_name == "Unknown Competitor":
+            continue
+        amt = float(c_dict.get("amount") or 0.0)
+        rank = str(c_dict.get("rank") or "").strip()
+        diff = float(c_dict.get("percent_diff") or 0.0)
+        diff_suffix = f" [{diff}%]" if diff else ""
+        ranked_lines.append(f"{idx}) {comp_name}: Rs. {amt:,.2f}/- ({rank}){diff_suffix}")
+
+    if ranked_lines and not existing_comments:
+        reason_loss = str(payload.get("reason_for_loss") or "").strip()
+        if reason_loss:
+            ranked_lines.append(f"Loss Reason: {reason_loss}")
+        payload["comments"] = "\n".join(ranked_lines)
+
+    return payload
 
 
 # ----------------- MULTI-WORKER SAFE PROGRESS & RESULT STORE -----------------
@@ -277,6 +324,13 @@ class PasswordReset(BaseModel):
     newPassword: str
 
 
+class CompetitorEntry(BaseModel):
+    rank: str
+    company: str
+    amount: Optional[float] = 0.00
+    percent_diff: Optional[float] = 0.00
+
+
 class Tender(BaseModel):
     tender_status: str
     received_date: Optional[str] = None
@@ -300,6 +354,10 @@ class Tender(BaseModel):
     pre_bid_time: Optional[str] = None
     mode_of_conduct: Optional[str] = None
     platform_or_address: Optional[str] = None
+    aarvi_rank: Optional[str] = None
+    reason_for_loss: Optional[str] = None
+    post_bid_remarks: Optional[str] = None
+    competitors: Optional[List[CompetitorEntry]] = None
 
 
 class ChatRequest(BaseModel):
@@ -329,13 +387,6 @@ class StatusUpdate(BaseModel):
     tender_status: str
 
 
-class CompetitorEntry(BaseModel):
-    rank: str
-    company: str
-    amount: Optional[float] = 0.00
-    percent_diff: Optional[float] = 0.00
-
-
 class FullPostBidPayload(BaseModel):
     aarvi_rank: str
     reason_for_loss: str
@@ -355,14 +406,21 @@ def on_startup():
     print(f"   PORT: {port}", flush=True)
     print("   DB: POSTGRESQL", flush=True)
     print("   OCR ENGINE: TESSERACT 5 (HYBRID PARALLEL)", flush=True)
-    print("   AI ENGINE: GEMINI TRIAGED 2-PASS", flush=True)
+    print("   AI ENGINE: GEMINI TRIAGED 2-PASS + UNIFIED KB", flush=True)
     print("==============================================\n", flush=True)
+
+    # Preload Excel + Aarvi JSON Profiles + Reference Rules into memory
+    get_knowledge_store()
 
     conn = get_db_connection()
     if conn:
         try:
             cur = conn.cursor()
             cur.execute("ALTER TABLE tenders ADD COLUMN IF NOT EXISTS summary_file_url TEXT;")
+            cur.execute("ALTER TABLE tenders ADD COLUMN IF NOT EXISTS aarvi_rank TEXT;")
+            cur.execute("ALTER TABLE tenders ADD COLUMN IF NOT EXISTS reason_for_loss TEXT;")
+            cur.execute("ALTER TABLE tenders ADD COLUMN IF NOT EXISTS post_bid_remarks TEXT;")
+            cur.execute("ALTER TABLE tenders ADD COLUMN IF NOT EXISTS competitor_list JSONB;")
             cur.execute("ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS user_email TEXT;")
             cur.execute("ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
 
@@ -981,16 +1039,33 @@ def get_tenders(manager: str = None):
                 query += " AND project_manager ILIKE %s"
             params.append(f"%{manager}%")
 
-        query += f"""
+        query += """
             ORDER BY
-                CASE WHEN due_date >= '{today}' THEN 0 ELSE 1 END ASC,
-                CASE WHEN due_date >= '{today}' THEN due_date END ASC,
-                CASE WHEN due_date < '{today}' THEN due_date END DESC
+                CASE WHEN due_date >= %s THEN 0 ELSE 1 END ASC,
+                CASE WHEN due_date >= %s THEN due_date END ASC,
+                CASE WHEN due_date < %s THEN due_date END DESC
         """
+        params.extend([today, today, today])
 
         cur.execute(query, params)
         tenders = cur.fetchall()
-        return [dict(t) for t in tenders]
+
+        formatted_rows = []
+        for t in tenders:
+            row_dict = dict(t)
+            comp_raw = row_dict.get("competitor_list")
+            if isinstance(comp_raw, str) and comp_raw.strip():
+                try:
+                    row_dict["competitors"] = json.loads(comp_raw)
+                except Exception:
+                    row_dict["competitors"] = []
+            elif isinstance(comp_raw, list):
+                row_dict["competitors"] = comp_raw
+            else:
+                row_dict["competitors"] = []
+            formatted_rows.append(row_dict)
+
+        return formatted_rows
     except Exception as e:
         print(f"❌ Get Tenders Error: {e}", flush=True)
         return []
@@ -1001,22 +1076,24 @@ def get_tenders(manager: str = None):
 
 # ----------------- ADD TENDER -----------------
 @app.post("/tenders")
-def add_tender(t: Tender):
+def add_tender(t: Tender, background_tasks: BackgroundTasks):
     conn = get_db_connection()
     try:
         cur = conn.cursor()
+        comp_json = _format_competitors_for_storage(t.competitors)
         query = """
             INSERT INTO tenders (
                 tender_status, received_date, due_date, name_of_client, location,
                 tender_no, tender_open_price, quoted_value, description, project_manager,
                 emd, emd_status, tender_fee_status, price_status, source,
                 comments, docs_prepared_by, financial_year, pre_bidding_date, pre_bid_time,
-                mode_of_conduct, platform_or_address
+                mode_of_conduct, platform_or_address, aarvi_rank, reason_for_loss,
+                post_bid_remarks, competitor_list
             )
             VALUES (
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                %s,%s
+                %s,%s,%s,%s,%s,%s::jsonb
             )
         """
         cur.execute(
@@ -1044,9 +1121,14 @@ def add_tender(t: Tender):
                 clean_empty(t.pre_bid_time),
                 clean_empty(t.mode_of_conduct),
                 clean_empty(t.platform_or_address),
+                clean_empty(t.aarvi_rank),
+                clean_empty(t.reason_for_loss),
+                clean_empty(t.post_bid_remarks),
+                comp_json,
             ),
         )
         conn.commit()
+        background_tasks.add_task(sync_tender_to_excel, _build_excel_sync_payload(t.dict()))
         return {"message": "Success"}
     except Exception as e:
         print(f"DATABASE ERROR: {e}", flush=True)
@@ -1060,11 +1142,13 @@ def add_tender(t: Tender):
 @app.post("/tenders-with-file")
 async def add_tender_with_file(
     request: Request,
+    background_tasks: BackgroundTasks,
     tender_data: str = Form(...),
     summary_file: UploadFile = File(...),
 ):
     try:
         t = json.loads(tender_data)
+        comp_json = _format_competitors_for_storage(t.get("competitors"))
 
         safe_filename = summary_file.filename.replace(" ", "_")
         unique_filename = f"{uuid.uuid4()}_{safe_filename}"
@@ -1088,12 +1172,13 @@ async def add_tender_with_file(
                 tender_no, tender_open_price, quoted_value, description, project_manager,
                 emd, emd_status, tender_fee_status, price_status, source,
                 comments, docs_prepared_by, financial_year, pre_bidding_date, pre_bid_time,
-                mode_of_conduct, platform_or_address, summary_file_url
+                mode_of_conduct, platform_or_address, summary_file_url,
+                aarvi_rank, reason_for_loss, post_bid_remarks, competitor_list
             )
             VALUES (
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
-                %s,%s,%s
+                %s,%s,%s,%s,%s,%s,%s::jsonb
             )
         """
         cur.execute(
@@ -1122,9 +1207,14 @@ async def add_tender_with_file(
                 clean_empty(t.get("mode_of_conduct")),
                 clean_empty(t.get("platform_or_address")),
                 file_url,
+                clean_empty(t.get("aarvi_rank")),
+                clean_empty(t.get("reason_for_loss")),
+                clean_empty(t.get("post_bid_remarks")),
+                comp_json,
             ),
         )
         conn.commit()
+        background_tasks.add_task(sync_tender_to_excel, _build_excel_sync_payload(t))
         return {"message": "Success with file"}
 
     except Exception as e:
@@ -1181,7 +1271,7 @@ def export_tenders():
 
 # ----------------- QUICK STATUS UPDATE -----------------
 @app.patch("/tenders/{tender_no:path}/status")
-def quick_update_status(tender_no: str, update: StatusUpdate):
+def quick_update_status(tender_no: str, update: StatusUpdate, background_tasks: BackgroundTasks):
     conn = get_db_connection()
     try:
         cur = conn.cursor()
@@ -1194,6 +1284,7 @@ def quick_update_status(tender_no: str, update: StatusUpdate):
             (update.tender_status, tender_no),
         )
         conn.commit()
+        background_tasks.add_task(sync_tender_to_excel, {"tender_no": tender_no, "tender_status": update.tender_status})
         return {"message": "Status updated successfully"}
     except Exception as e:
         return {"error": str(e)}
@@ -1204,7 +1295,7 @@ def quick_update_status(tender_no: str, update: StatusUpdate):
 
 # ----------------- LOG TENDER LOSS (L1-L5) -----------------
 @app.put("/log-loss/{tender_no:path}")
-def log_full_leaderboard_loss(tender_no: str, payload: FullPostBidPayload):
+def log_full_leaderboard_loss(tender_no: str, payload: FullPostBidPayload, background_tasks: BackgroundTasks):
     conn = get_db_connection()
     try:
         cur = conn.cursor()
@@ -1231,6 +1322,22 @@ def log_full_leaderboard_loss(tender_no: str, payload: FullPostBidPayload):
         conn.commit()
         if cur.rowcount == 0:
             raise HTTPException(status_code=404, detail="Tender not found")
+
+        ranked_lines = []
+        for idx, c in enumerate(payload.competitors, start=1):
+            diff_suffix = f" [{c.percent_diff}%]" if c.percent_diff else ""
+            ranked_lines.append(f"{idx}) {c.company}: Rs. {float(c.amount or 0.0):,.2f}/- ({c.rank}){diff_suffix}")
+        if payload.reason_for_loss:
+            ranked_lines.append(f"Loss Reason: {payload.reason_for_loss}")
+
+        background_tasks.add_task(
+            sync_tender_to_excel,
+            {
+                "tender_no": tender_no,
+                "tender_status": "Tender Lost",
+                "comments": "\n".join(ranked_lines),
+            },
+        )
         return {"status": "success", "message": "Leaderboard logged successfully"}
     except Exception as e:
         print(f"❌ Error logging loss: {e}", flush=True)
@@ -1240,7 +1347,7 @@ def log_full_leaderboard_loss(tender_no: str, payload: FullPostBidPayload):
             conn.close()
 
 
-# ----------------- DELETE TENDER -----------------
+# ----------------- DELETE TENDER (NEVER DELETES FROM EXCEL ARCHIVE) -----------------
 @app.delete("/tenders/{tender_no:path}")
 def delete_tender(tender_no: str):
     conn = get_db_connection()
@@ -1266,10 +1373,11 @@ def delete_tender(tender_no: str):
 
 # ----------------- UPDATE TENDER -----------------
 @app.put("/tenders/{tender_no:path}")
-def update_tender(tender_no: str, t: Tender):
+def update_tender(tender_no: str, t: Tender, background_tasks: BackgroundTasks):
     conn = get_db_connection()
     try:
         cur = conn.cursor()
+        comp_json = _format_competitors_for_storage(t.competitors)
         cur.execute(
             """
             UPDATE tenders SET
@@ -1278,7 +1386,11 @@ def update_tender(tender_no: str, t: Tender):
                 location=%s, tender_open_price=%s, quoted_value=%s, description=%s,
                 project_manager=%s, emd=%s, emd_status=%s, tender_fee_status=%s,
                 price_status=%s, source=%s, comments=%s, docs_prepared_by=%s,
-                financial_year=%s
+                financial_year=%s,
+                aarvi_rank=COALESCE(%s, aarvi_rank),
+                reason_for_loss=COALESCE(%s, reason_for_loss),
+                post_bid_remarks=COALESCE(%s, post_bid_remarks),
+                competitor_list=COALESCE(%s::jsonb, competitor_list)
             WHERE tender_no=%s
             """,
             (
@@ -1303,10 +1415,17 @@ def update_tender(tender_no: str, t: Tender):
                 clean_empty(t.comments),
                 clean_empty(t.docs_prepared_by),
                 clean_empty(t.financial_year),
+                clean_empty(t.aarvi_rank),
+                clean_empty(t.reason_for_loss),
+                clean_empty(t.post_bid_remarks),
+                comp_json,
                 tender_no,
             ),
         )
         conn.commit()
+        payload_dict = t.dict()
+        payload_dict["tender_no"] = tender_no
+        background_tasks.add_task(sync_tender_to_excel, _build_excel_sync_payload(payload_dict))
         return {"message": "Updated successfully"}
     except Exception as e:
         return {"error": str(e)}
@@ -1320,11 +1439,13 @@ def update_tender(tender_no: str, t: Tender):
 async def update_tender_with_file(
     tender_no: str,
     request: Request,
+    background_tasks: BackgroundTasks,
     tender_data: str = Form(...),
     summary_file: UploadFile = File(...),
 ):
     try:
         t = json.loads(tender_data)
+        comp_json = _format_competitors_for_storage(t.get("competitors"))
 
         safe_filename = summary_file.filename.replace(" ", "_")
         unique_filename = f"{uuid.uuid4()}_{safe_filename}"
@@ -1350,7 +1471,11 @@ async def update_tender_with_file(
                 location=%s, tender_open_price=%s, quoted_value=%s, description=%s,
                 project_manager=%s, emd=%s, emd_status=%s, tender_fee_status=%s,
                 price_status=%s, source=%s, comments=%s, docs_prepared_by=%s,
-                financial_year=%s, summary_file_url=%s
+                financial_year=%s, summary_file_url=%s,
+                aarvi_rank=COALESCE(%s, aarvi_rank),
+                reason_for_loss=COALESCE(%s, reason_for_loss),
+                post_bid_remarks=COALESCE(%s, post_bid_remarks),
+                competitor_list=COALESCE(%s::jsonb, competitor_list)
             WHERE tender_no=%s
             """,
             (
@@ -1376,10 +1501,16 @@ async def update_tender_with_file(
                 clean_empty(t.get("docs_prepared_by")),
                 clean_empty(t.get("financial_year")),
                 file_url,
+                clean_empty(t.get("aarvi_rank")),
+                clean_empty(t.get("reason_for_loss")),
+                clean_empty(t.get("post_bid_remarks")),
+                comp_json,
                 tender_no,
             ),
         )
         conn.commit()
+        t["tender_no"] = tender_no
+        background_tasks.add_task(sync_tender_to_excel, _build_excel_sync_payload(t))
         return {"message": "Updated successfully with file"}
 
     except Exception as e:
